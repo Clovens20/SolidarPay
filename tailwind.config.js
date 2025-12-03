@@ -23,6 +23,14 @@ module.exports = {
     			ring: 'hsl(var(--ring))',
     			background: 'hsl(var(--background))',
     			foreground: 'hsl(var(--foreground))',
+    			solidarpay: {
+    				primary: '#0891B2',
+    				secondary: '#0E7490',
+    				bg: '#F0F9FF',
+    				white: '#FFFFFF',
+    				text: '#0F172A',
+    				border: '#E0F2FE'
+    			},
     			primary: {
     				DEFAULT: 'hsl(var(--primary))',
     				foreground: 'hsl(var(--primary-foreground))'

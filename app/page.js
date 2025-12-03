@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -26,10 +27,12 @@ import {
   Plus,
   AlertCircle,
   TrendingUp,
-  History
+  History,
+  User
 } from 'lucide-react'
 
 export default function App() {
+  const router = useRouter()
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
@@ -59,6 +62,7 @@ export default function App() {
 
   useEffect(() => {
     checkAuth()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -72,8 +76,22 @@ export default function App() {
     const savedUser = localStorage.getItem('solidarpay_user')
     
     if (savedSession && savedUser) {
+      const userData = JSON.parse(savedUser)
+      
+      // Rediriger les super admins vers /admin/login
+      if (userData.role === 'super_admin') {
+        router.push('/admin/login')
+        return
+      }
+      
+      // Rediriger les admins tontine vers l'interface complète /admin-tontine
+      if (userData.role === 'admin') {
+        router.push('/admin-tontine')
+        return
+      }
+      
       setSession(JSON.parse(savedSession))
-      setUser(JSON.parse(savedUser))
+      setUser(userData)
     }
     setLoading(false)
   }
@@ -149,10 +167,26 @@ export default function App() {
         const data = await res.json()
         if (data.error) throw new Error(data.error)
 
+        // Rediriger les super admins vers /admin/login
+        if (data.user.role === 'super_admin') {
+          toast({
+            title: 'Accès réservé',
+            description: 'Les super administrateurs doivent se connecter via /admin/login',
+            variant: 'destructive',
+          })
+          return
+        }
+
         localStorage.setItem('solidarpay_session', JSON.stringify(data.session))
         localStorage.setItem('solidarpay_user', JSON.stringify(data.user))
         setSession(data.session)
         setUser(data.user)
+
+        // Rediriger les admins tontine vers l'interface complète /admin-tontine
+        if (data.user.role === 'admin') {
+          router.push('/admin-tontine')
+          return
+        }
 
         toast({
           title: 'Connexion réussie!',
@@ -558,6 +592,17 @@ export default function App() {
                 {user.role === 'admin' ? 'Administrateur' : 'Membre'}
               </Badge>
             </div>
+            {user.role === 'member' && (
+              <Button 
+                variant="outline" 
+                size="sm"
+                onClick={() => router.push('/profile')}
+                className="flex items-center gap-2"
+              >
+                <User className="h-4 w-4" />
+                Mon Profil
+              </Button>
+            )}
             <Button variant="outline" size="icon" onClick={handleLogout}>
               <LogOut className="h-4 w-4" />
             </Button>
@@ -584,7 +629,10 @@ export default function App() {
                     <CardTitle>Sélectionner une tontine</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <Select value={selectedTontine?.id} onValueChange={selectTontine}>
+                    <Select 
+                      value={selectedTontine?.id || undefined} 
+                      onValueChange={selectTontine}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Choisir une tontine" />
                       </SelectTrigger>
@@ -889,6 +937,7 @@ export default function App() {
                           <SelectContent>
                             <SelectItem value="monthly">Mensuel</SelectItem>
                             <SelectItem value="biweekly">Bi-hebdomadaire</SelectItem>
+                            <SelectItem value="weekly">Hebdomadaire</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -948,7 +997,10 @@ export default function App() {
                   <CardTitle>Mes tontines</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <Select value={selectedTontine?.id} onValueChange={selectTontine}>
+                  <Select 
+                    value={selectedTontine?.id || undefined} 
+                    onValueChange={selectTontine}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Choisir une tontine" />
                     </SelectTrigger>

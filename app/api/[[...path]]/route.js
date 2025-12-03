@@ -216,14 +216,20 @@ export async function POST(request) {
 
       if (error) throw error
 
-      // Get user details
+      // Get user details - utiliser .maybeSingle() pour éviter l'erreur si utilisateur non trouvé
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
         .eq('email', email)
-        .single()
+        .maybeSingle()
 
-      if (userError) throw userError
+      if (userError) {
+        return NextResponse.json({ error: userError.message }, { status: 500 })
+      }
+
+      if (!userData) {
+        return NextResponse.json({ error: 'Utilisateur introuvable dans la base de données' }, { status: 404 })
+      }
 
       return NextResponse.json({ user: userData, session: data.session })
     }

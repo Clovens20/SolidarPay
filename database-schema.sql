@@ -19,7 +19,7 @@ CREATE TABLE tontines (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL,
   "contributionAmount" DECIMAL(10,2) NOT NULL,
-  frequency TEXT NOT NULL CHECK (frequency IN ('monthly', 'biweekly')),
+  frequency TEXT NOT NULL CHECK (frequency IN ('monthly', 'biweekly', 'weekly')),
   "adminId" UUID REFERENCES users(id),
   "kohoReceiverEmail" TEXT NOT NULL,
   status TEXT DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'completed')),
