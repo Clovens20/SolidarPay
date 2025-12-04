@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -45,7 +45,6 @@ const EVENT_CATEGORIES = {
 
 export default function SystemLogsPage() {
   const [logs, setLogs] = useState([])
-  const [filteredLogs, setFilteredLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     criticalErrors24h: 0,
@@ -62,26 +61,8 @@ export default function SystemLogsPage() {
     search: ''
   })
 
-  useEffect(() => {
-    loadLogs()
-    loadStats()
-    checkAlerts()
-    
-    // Auto-refresh every 60 seconds (reduced from 30)
-    const interval = setInterval(() => {
-      loadLogs()
-      loadStats()
-      checkAlerts()
-    }, 60000)
-
-    return () => clearInterval(interval)
-  }, [])
-
-  useEffect(() => {
-    applyFilters()
-  }, [filters, logs])
-
-  const loadLogs = async () => {
+  // Mémoriser loadLogs pour éviter les re-créations
+  const loadLogsMemo = useCallback(async () => {
     try {
       setLoading(true)
       const { data, error } = await supabase
@@ -118,9 +99,10 @@ export default function SystemLogsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const loadStats = async () => {
+  // Mémoriser loadStats pour éviter les re-créations
+  const loadStatsMemo = useCallback(async () => {
     try {
       // Parallelize all stats queries
       const yesterday = new Date()
@@ -176,9 +158,10 @@ export default function SystemLogsPage() {
         uptime: '99.9%'
       })
     }
-  }
+  }, [])
 
-  const checkAlerts = async () => {
+  // Mémoriser checkAlerts pour éviter les re-créations
+  const checkAlertsMemo = useCallback(async () => {
     const alertsList = []
 
     try {
@@ -231,9 +214,38 @@ export default function SystemLogsPage() {
     }
 
     setAlerts(alertsList)
-  }
+  }, [])
 
-  const applyFilters = () => {
+  useEffect(() => {
+    let mounted = true
+
+    const initializeLogs = async () => {
+      if (mounted) {
+        await loadLogsMemo()
+        await loadStatsMemo()
+        await checkAlertsMemo()
+      }
+    }
+
+    initializeLogs()
+
+    // Auto-refresh every 60 seconds (reduced from 30)
+    const interval = setInterval(() => {
+      if (mounted) {
+        loadLogsMemo()
+        loadStatsMemo()
+        checkAlertsMemo()
+      }
+    }, 60000)
+
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
+  }, [loadLogsMemo, loadStatsMemo, checkAlertsMemo])
+
+  // Utiliser useMemo pour filtrer au lieu d'un useEffect qui cause des boucles
+  const filteredLogsMemo = useMemo(() => {
     let filtered = [...logs]
 
     // Filter by event type
@@ -269,8 +281,9 @@ export default function SystemLogsPage() {
       )
     }
 
-    setFilteredLogs(filtered)
-  }
+    return filtered
+  }, [filters, logs])
+
 
   return (
     <div className="space-y-6">
@@ -298,7 +311,7 @@ export default function SystemLogsPage() {
         <CardHeader>
           <CardTitle>Événements système</CardTitle>
           <CardDescription>
-            {filteredLogs.length} événement(s) trouvé(s) sur {logs.length} total
+            {filteredLogsMemo.length} événement(s) trouvé(s) sur {logs.length} total
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -317,7 +330,7 @@ export default function SystemLogsPage() {
             </div>
           ) : (
             <SystemLogsTable
-              logs={filteredLogs}
+              logs={filteredLogsMemo}
               loading={loading}
               eventCategories={EVENT_CATEGORIES}
             />

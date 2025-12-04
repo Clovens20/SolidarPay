@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -19,7 +19,6 @@ import KYCFilters from '@/components/admin/KYCFilters'
 import ManualReviewTab from '@/components/admin/ManualReviewTab'
 
 export default function KYCPage() {
-  const [documents, setDocuments] = useState([])
   const [allDocuments, setAllDocuments] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState('pending_review') // Focus sur revues manuelles
@@ -42,24 +41,18 @@ export default function KYCPage() {
   })
   const [sortBy, setSortBy] = useState('oldest')
 
-  useEffect(() => {
-    loadDocuments()
-    loadStats()
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(() => {
-      loadDocuments()
-      loadStats()
-    }, 30000)
+  // Fonction helper pour calculer un score mock
+  const calculateMockScore = (doc) => {
+    let score = 50
+    if (doc.status === 'approved') score = 85 + Math.random() * 15
+    if (doc.status === 'rejected' || doc.status === 'new_document_required') score = Math.random() * 50
+    if (doc.status === 'pending_review') score = 50 + Math.random() * 35 // 50-85
+    if (doc.documentUrl) score += 20
+    return Math.round(Math.min(100, Math.max(0, score)))
+  }
 
-    return () => clearInterval(interval)
-  }, [])
-
-  useEffect(() => {
-    filterAndSortDocuments()
-  }, [activeTab, filters, sortBy, allDocuments])
-
-  const loadDocuments = async () => {
+  // Mémoriser loadDocuments pour éviter les re-créations
+  const loadDocuments = useCallback(async () => {
     try {
       setLoading(true)
       const { data, error } = await supabase
@@ -92,18 +85,10 @@ export default function KYCPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
-  const calculateMockScore = (doc) => {
-    let score = 50
-    if (doc.status === 'approved') score = 85 + Math.random() * 15
-    if (doc.status === 'rejected' || doc.status === 'new_document_required') score = Math.random() * 50
-    if (doc.status === 'pending_review') score = 50 + Math.random() * 35 // 50-85
-    if (doc.documentUrl) score += 20
-    return Math.round(Math.min(100, Math.max(0, score)))
-  }
-
-  const loadStats = async () => {
+  // Mémoriser loadStats pour éviter les re-créations
+  const loadStats = useCallback(async () => {
     try {
       // Pending (en cours d'analyse automatique - pas encore de score)
       const { count: pending } = await supabase
@@ -167,9 +152,23 @@ export default function KYCPage() {
     } catch (error) {
       console.error('Error loading stats:', error)
     }
-  }
+  }, [])
 
-  const filterAndSortDocuments = () => {
+  useEffect(() => {
+    loadDocuments()
+    loadStats()
+    
+    // Auto-refresh every 60 seconds (reduced from 30 for better performance)
+    const interval = setInterval(() => {
+      loadDocuments()
+      loadStats()
+    }, 60000)
+
+    return () => clearInterval(interval)
+  }, [loadDocuments, loadStats])
+
+  // Utiliser useMemo pour filtrer et trier au lieu d'un useEffect qui cause des boucles
+  const documents = useMemo(() => {
     let filtered = [...allDocuments]
 
     // Filter by tab
@@ -225,14 +224,14 @@ export default function KYCPage() {
       }
     })
 
-    setDocuments(filtered)
-  }
+    return filtered
+  }, [activeTab, filters, sortBy, allDocuments])
 
-  const handleDocumentUpdate = () => {
+  const handleDocumentUpdate = useCallback(() => {
     loadDocuments()
     loadStats()
     setSelectedDocument(null)
-  }
+  }, [loadDocuments, loadStats])
 
   return (
     <div className="space-y-6">

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import AdminHeader from '@/components/admin/AdminHeader'
@@ -16,31 +16,25 @@ export default function AdminLayout({ children }) {
   // Ne pas vérifier l'authentification sur la page de login
   const isLoginPage = pathname === '/admin/login'
 
-  useEffect(() => {
-    // Si c'est la page de login, ne pas vérifier l'authentification
-    if (pathname === '/admin/login') {
-      setLoading(false)
-      return
-    }
-    
-    checkAuth()
-    loadKycPending()
-    
-    // Set up real-time subscription for KYC updates
-    const channel = supabase
-      .channel('kyc-updates')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'kyc_documents' },
-        () => loadKycPending()
-      )
-      .subscribe()
+  // Mémoriser loadKycPending pour éviter les re-créations
+  const loadKycPending = useCallback(async () => {
+    try {
+      // Compter uniquement les revues manuelles (pending_review)
+      const { count, error } = await supabase
+        .from('kyc_documents')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'pending_review')
 
-    return () => {
-      supabase.removeChannel(channel)
+      if (!error) {
+        setKycPending(count || 0)
+      }
+    } catch (error) {
+      console.error('Error loading KYC pending:', error)
     }
-  }, [pathname])
+  }, [])
 
-  const checkAuth = async () => {
+  // Mémoriser checkAuth pour éviter les re-créations
+  const checkAuth = useCallback(async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession()
       
@@ -85,23 +79,47 @@ export default function AdminLayout({ children }) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router])
 
-  const loadKycPending = async () => {
-    try {
-      // Compter uniquement les revues manuelles (pending_review)
-      const { count, error } = await supabase
-        .from('kyc_documents')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending_review')
-
-      if (!error) {
-        setKycPending(count || 0)
-      }
-    } catch (error) {
-      console.error('Error loading KYC pending:', error)
+  useEffect(() => {
+    // Si c'est la page de login, ne pas vérifier l'authentification
+    if (pathname === '/admin/login') {
+      setLoading(false)
+      return
     }
-  }
+    
+    checkAuth()
+    loadKycPending()
+    
+    // Set up real-time subscription for KYC updates
+    let channel = null
+    const setupSubscription = async () => {
+      channel = supabase
+        .channel(`kyc-updates-${Date.now()}`)
+        .on('postgres_changes', 
+          { event: '*', schema: 'public', table: 'kyc_documents' },
+          () => {
+            loadKycPending()
+          }
+        )
+        .subscribe()
+
+      // Vérifier la connexion après un court délai
+      setTimeout(() => {
+        if (channel && channel.state === 'SUBSCRIBED') {
+          // Subscription active
+        }
+      }, 1000)
+    }
+
+    setupSubscription()
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel)
+      }
+    }
+  }, [pathname, checkAuth, loadKycPending])
 
   // Sur la page de login, afficher directement les children sans layout
   if (isLoginPage) {

@@ -286,7 +286,9 @@ export default function AdminDashboard() {
         loadCharts(),
         loadTimeline()
       ])
-      loadAlerts(statsResult.kycPending)
+      if (statsResult?.kycPending !== undefined) {
+        loadAlerts(statsResult.kycPending)
+      }
     } catch (error) {
       console.error('Error loading dashboard:', error)
     } finally {
@@ -295,11 +297,27 @@ export default function AdminDashboard() {
   }, [loadStats, loadCharts, loadAlerts, loadTimeline])
 
   useEffect(() => {
-    loadDashboardData()
+    let mounted = true
+    
+    const initializeDashboard = async () => {
+      if (mounted) {
+        await loadDashboardData()
+      }
+    }
+    
+    initializeDashboard()
     
     // Reduce refresh to 60 seconds instead of 30
-    const interval = setInterval(loadDashboardData, 60000)
-    return () => clearInterval(interval)
+    const interval = setInterval(() => {
+      if (mounted) {
+        loadDashboardData()
+      }
+    }, 60000)
+    
+    return () => {
+      mounted = false
+      clearInterval(interval)
+    }
   }, [loadDashboardData])
 
   const statCards = useMemo(() => [

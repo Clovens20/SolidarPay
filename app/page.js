@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -12,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
+import LandingPage from '@/components/landing/LandingPage'
 import { 
   Users, 
   DollarSign, 
@@ -28,7 +30,10 @@ import {
   AlertCircle,
   TrendingUp,
   History,
-  User
+  User,
+  ShieldCheck,
+  Upload,
+  X
 } from 'lucide-react'
 
 export default function App() {
@@ -37,13 +42,6 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState(null)
   const { toast } = useToast()
-
-  // Auth states
-  const [authMode, setAuthMode] = useState('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [fullName, setFullName] = useState('')
-  const [phone, setPhone] = useState('')
 
   // App states
   const [tontines, setTontines] = useState([])
@@ -59,26 +57,76 @@ export default function App() {
   const [newTontineFrequency, setNewTontineFrequency] = useState('monthly')
   const [newTontineKohoEmail, setNewTontineKohoEmail] = useState('')
   const [selectedMembers, setSelectedMembers] = useState([])
+  const [logoUrl, setLogoUrl] = useState(null)
+  const [kycStatus, setKycStatus] = useState(null)
+  const [kycLoading, setKycLoading] = useState(false)
+  const [showKYCAlert, setShowKYCAlert] = useState(true)
 
   useEffect(() => {
     checkAuth()
+    loadLogo()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
     if (user) {
       loadData()
+      if (user.role === 'member') {
+        loadKYCStatus()
+      }
     }
   }, [user])
 
-  const checkAuth = () => {
+  const loadKYCStatus = async () => {
+    if (!user?.id) return
+    
+    try {
+      setKycLoading(true)
+      const { data, error } = await supabase
+        .from('kyc_documents')
+        .select('*')
+        .eq('userId', user.id)
+        .order('createdAt', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error loading KYC status:', error)
+      } else {
+        setKycStatus(data)
+      }
+    } catch (error) {
+      console.error('Error loading KYC status:', error)
+    } finally {
+      setKycLoading(false)
+    }
+  }
+
+  const checkAuth = async () => {
     const savedSession = localStorage.getItem('solidarpay_session')
     const savedUser = localStorage.getItem('solidarpay_user')
     
-    if (savedSession && savedUser) {
+    // Si pas de session, afficher la landing page
+    if (!savedSession || !savedUser) {
+      setLoading(false)
+      return
+    }
+    
+    try {
+      // Vérifier que la session Supabase est toujours valide
+      const { data: { session: validSession }, error } = await supabase.auth.getSession()
+      
+      // Si pas de session valide ou erreur, nettoyer et afficher landing page
+      if (error || !validSession) {
+        localStorage.removeItem('solidarpay_session')
+        localStorage.removeItem('solidarpay_user')
+        setLoading(false)
+        return
+      }
+      
       const userData = JSON.parse(savedUser)
       
-      // Rediriger les super admins vers /admin/login
+      // Rediriger les super admins vers /admin/login seulement si session valide
       if (userData.role === 'super_admin') {
         router.push('/admin/login')
         return
@@ -92,7 +140,12 @@ export default function App() {
       
       setSession(JSON.parse(savedSession))
       setUser(userData)
+    } catch (error) {
+      // Si erreur de parsing ou autre, nettoyer et afficher landing page
+      localStorage.removeItem('solidarpay_session')
+      localStorage.removeItem('solidarpay_user')
     }
+    
     setLoading(false)
   }
 
@@ -152,74 +205,33 @@ export default function App() {
     }
   }
 
-  const handleAuth = async (e) => {
-    e.preventDefault()
-    setLoading(true)
-
+  const loadLogo = async () => {
     try {
-      if (authMode === 'login') {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password }),
-        })
+      // D'abord, essayer de charger depuis la base de données
+      const { data, error } = await supabase
+        .from('platform_customization')
+        .select('value')
+        .eq('key', 'logo_url')
+        .single()
 
-        const data = await res.json()
-        if (data.error) throw new Error(data.error)
-
-        // Rediriger les super admins vers /admin/login
-        if (data.user.role === 'super_admin') {
-          toast({
-            title: 'Accès réservé',
-            description: 'Les super administrateurs doivent se connecter via /admin/login',
-            variant: 'destructive',
-          })
+      if (!error && data?.value) {
+        // La valeur peut être un JSONB string ou un objet
+        const logoValue = typeof data.value === 'string' 
+          ? data.value.replace(/"/g, '') 
+          : data.value
+        if (logoValue && logoValue !== 'null' && logoValue.trim() !== '') {
+          setLogoUrl(logoValue)
           return
         }
-
-        localStorage.setItem('solidarpay_session', JSON.stringify(data.session))
-        localStorage.setItem('solidarpay_user', JSON.stringify(data.user))
-        setSession(data.session)
-        setUser(data.user)
-
-        // Rediriger les admins tontine vers l'interface complète /admin-tontine
-        if (data.user.role === 'admin') {
-          router.push('/admin-tontine')
-          return
-        }
-
-        toast({
-          title: 'Connexion réussie!',
-          description: `Bienvenue ${data.user.fullName}`,
-        })
-      } else {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, fullName, phone }),
-        })
-
-        const data = await res.json()
-        if (data.error) throw new Error(data.error)
-
-        localStorage.setItem('solidarpay_session', JSON.stringify(data.session))
-        localStorage.setItem('solidarpay_user', JSON.stringify(data.user))
-        setSession(data.session)
-        setUser(data.user)
-
-        toast({
-          title: 'Inscription réussie!',
-          description: 'Vérifiez votre email pour confirmer votre compte',
-        })
       }
+      
+      // Si pas de logo dans la base, utiliser le logo local par défaut
+      // Le logo est dans public/logo.png.jpg
+      setLogoUrl('/logo.png.jpg')
     } catch (error) {
-      toast({
-        title: 'Erreur',
-        description: error.message,
-        variant: 'destructive',
-      })
-    } finally {
-      setLoading(false)
+      console.error('Error loading logo:', error)
+      // En cas d'erreur, utiliser le logo local par défaut
+      setLogoUrl('/logo.png.jpg')
     }
   }
 
@@ -446,119 +458,21 @@ export default function App() {
     }
   }
 
-  // Auth screen
-  if (!user) {
+  // Loading state
+  if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md shadow-2xl">
-          <CardHeader className="text-center space-y-4">
-            <div className="flex justify-center mb-4">
-              <img 
-                src="https://customer-assets.emergentagent.com/job_c9a6076a-d63d-4961-b674-ac9104b374e9/artifacts/7rmsfnh6_copilot_image_1764402573003.jpeg" 
-                alt="SolidarPay Logo" 
-                className="h-24 w-24 object-contain bg-white rounded-full p-2 shadow-lg"
-              />
-            </div>
-            <CardTitle className="text-3xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent">
-              SolidarPay
-            </CardTitle>
-            <CardDescription className="text-base">
-              Gérez votre tontine familiale en toute simplicité
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={authMode} onValueChange={setAuthMode} className="w-full">
-              <TabsList className="grid w-full grid-cols-2 mb-6">
-                <TabsTrigger value="login">Connexion</TabsTrigger>
-                <TabsTrigger value="register">Inscription</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="login">
-                <form onSubmit={handleAuth} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="votre@email.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="password">Mot de passe</Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <Button type="submit" className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700" disabled={loading}>
-                    {loading ? 'Connexion...' : 'Se connecter'}
-                  </Button>
-                </form>
-              </TabsContent>
-              
-              <TabsContent value="register">
-                <form onSubmit={handleAuth} className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="fullName">Nom complet</Label>
-                    <Input
-                      id="fullName"
-                      placeholder="Jean Dupont"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">Téléphone (optionnel)</Label>
-                    <Input
-                      id="phone"
-                      type="tel"
-                      placeholder="+1 234 567 8900"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-email">Email</Label>
-                    <Input
-                      id="reg-email"
-                      type="email"
-                      placeholder="votre@email.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="reg-password">Mot de passe</Label>
-                    <Input
-                      id="reg-password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      required
-                      minLength={6}
-                    />
-                  </div>
-                  <Button type="submit" className="w-full bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-700 hover:to-blue-700" disabled={loading}>
-                    {loading ? 'Inscription...' : 'S\'inscrire'}
-                  </Button>
-                </form>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-        <Toaster />
+      <div className="min-h-screen bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Chargement...</p>
+        </div>
       </div>
     )
+  }
+
+  // Landing page for non-authenticated users
+  if (!user) {
+    return <LandingPage />
   }
 
   const myContribution = contributions.find(c => c.userId === user.id)
@@ -573,11 +487,22 @@ export default function App() {
       <header className="bg-white border-b border-slate-200 shadow-sm">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <img 
-              src="https://customer-assets.emergentagent.com/job_c9a6076a-d63d-4961-b674-ac9104b374e9/artifacts/7rmsfnh6_copilot_image_1764402573003.jpeg" 
-              alt="SolidarPay" 
-              className="h-12 w-12 object-contain bg-white rounded-full shadow"
-            />
+            {logoUrl ? (
+              <img 
+                src={logoUrl} 
+                alt="SolidarPay" 
+                className="h-12 w-12 object-contain bg-white rounded-full shadow"
+                onError={(e) => {
+                  // Si le logo personnalisé échoue, utiliser le logo par défaut avec lettre S
+                  e.target.style.display = 'none'
+                  const defaultLogo = e.target.nextElementSibling
+                  if (defaultLogo) defaultLogo.style.display = 'flex'
+                }}
+              />
+            ) : null}
+            <div className={`w-12 h-12 bg-gradient-to-br from-cyan-600 to-blue-600 rounded-lg flex items-center justify-center ${logoUrl ? 'hidden' : ''}`}>
+              <span className="text-white font-bold text-lg">S</span>
+            </div>
             <div>
               <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent">
                 SolidarPay
@@ -990,6 +915,85 @@ export default function App() {
         ) : (
           // MEMBER VIEW
           <div className="space-y-6">
+            {/* KYC Alert - Visible si pas encore vérifié */}
+            {user.role === 'member' && kycStatus && 
+             kycStatus.status !== 'approved' && 
+             kycStatus.status !== 'verifie' && 
+             showKYCAlert && (
+              <Card className="border-orange-300 bg-gradient-to-r from-orange-50 to-amber-50">
+                <CardContent className="p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-4 flex-1">
+                      <div className="flex-shrink-0 w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center">
+                        <ShieldCheck className="w-6 h-6 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-orange-900 mb-1">
+                          Vérifiez votre identité
+                        </h3>
+                        <p className="text-sm text-orange-700 mb-4">
+                          Pour accéder à toutes les fonctionnalités de SolidarPay et participer aux tontines, vous devez vérifier votre identité en soumettant un document d'identité.
+                        </p>
+                        <Button
+                          onClick={() => router.push('/profile?tab=kyc')}
+                          className="bg-orange-600 hover:bg-orange-700 text-white"
+                        >
+                          <Upload className="w-4 h-4 mr-2" />
+                          Soumettre mon document
+                        </Button>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowKYCAlert(false)}
+                      className="text-orange-700 hover:text-orange-900"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* KYC Alert - Si aucun document soumis */}
+            {user.role === 'member' && !kycLoading && !kycStatus && showKYCAlert && (
+              <Card className="border-orange-300 bg-gradient-to-r from-orange-50 to-amber-50">
+                <CardContent className="p-6">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start gap-4 flex-1">
+                      <div className="flex-shrink-0 w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center">
+                        <ShieldCheck className="w-6 h-6 text-white" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-orange-900 mb-1">
+                          Vérifiez votre identité
+                        </h3>
+                        <p className="text-sm text-orange-700 mb-4">
+                          Pour accéder à toutes les fonctionnalités de SolidarPay et participer aux tontines, vous devez vérifier votre identité en soumettant un document d'identité.
+                        </p>
+                        <Button
+                          onClick={() => router.push('/profile?tab=kyc')}
+                          className="bg-orange-600 hover:bg-orange-700 text-white"
+                        >
+                          <Upload className="w-4 h-4 mr-2" />
+                          Soumettre mon document
+                        </Button>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowKYCAlert(false)}
+                      className="text-orange-700 hover:text-orange-900"
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Tontine Selector */}
             {tontines.length > 0 && (
               <Card>

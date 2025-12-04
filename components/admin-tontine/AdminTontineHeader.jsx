@@ -27,7 +27,16 @@ export default function AdminTontineHeader({ user }) {
         {/* Logo and Title */}
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gradient-to-br from-solidarpay-primary to-solidarpay-secondary rounded-lg flex items-center justify-center">
+            <img 
+              src="/logo.png.jpg" 
+              alt="SolidarPay" 
+              className="h-8 w-8 object-contain"
+              onError={(e) => {
+                e.target.style.display = 'none'
+                e.target.nextElementSibling.style.display = 'flex'
+              }}
+            />
+            <div className="w-8 h-8 bg-gradient-to-br from-solidarpay-primary to-solidarpay-secondary rounded-lg flex items-center justify-center hidden">
               <span className="text-white font-bold text-lg">S</span>
             </div>
             <span className="text-xl font-bold text-solidarpay-text">SolidarPay</span>
