@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import { LogIn, ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -67,13 +68,29 @@ export default function LoginPage() {
         return
       }
 
-      // Sauvegarder la session
+      // Sauvegarder la session dans localStorage
       localStorage.setItem('solidarpay_session', JSON.stringify(data.session))
       localStorage.setItem('solidarpay_user', JSON.stringify(data.user))
 
+      // Synchroniser la session avec Supabase client si disponible
+      if (data.session?.access_token && data.session?.refresh_token) {
+        try {
+          await supabase.auth.setSession({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token
+          })
+        } catch (sessionError) {
+          console.warn('Could not sync session with Supabase:', sessionError)
+          // Continue quand même, localStorage sera utilisé comme fallback
+        }
+      }
+
       // Rediriger les admins tontine vers l'interface complète /admin-tontine
       if (data.user.role === 'admin') {
-        router.push('/admin-tontine')
+        // Attendre un peu pour que la session soit bien synchronisée
+        setTimeout(() => {
+          router.push('/admin-tontine')
+        }, 100)
         return
       }
 

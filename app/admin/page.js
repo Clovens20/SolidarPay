@@ -82,7 +82,7 @@ export default function AdminDashboard() {
         supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'admin'),
         supabase.from('tontines').select('*', { count: 'exact', head: true }),
         supabase.from('kyc_documents').select('*', { count: 'exact', head: true }).in('status', ['pending', 'pending_review', 'en_attente']),
-        supabase.from('kyc_documents').select('*', { count: 'exact', head: true }).eq('status', 'approved').gte('approvedAt', today.toISOString()),
+        supabase.from('kyc_documents').select('*', { count: 'exact', head: true }).eq('status', 'approved').gte('reviewedAt', today.toISOString()),
         supabase.from('payment_countries').select('*', { count: 'exact' }).eq('enabled', true),
         supabase.from('payment_countries').select('paymentMethods', { count: 'exact', head: true }).not('paymentMethods', 'is', null)
       ])
@@ -178,14 +178,14 @@ export default function AdminDashboard() {
               .from('kyc_documents')
               .select('*', { count: 'exact', head: true })
               .eq('status', 'approved')
-              .gte('approvedAt', weekStart)
-              .lt('approvedAt', weekEnd.toISOString()),
+              .gte('reviewedAt', weekStart)
+              .lt('reviewedAt', weekEnd.toISOString()),
             supabase
               .from('kyc_documents')
               .select('*', { count: 'exact', head: true })
               .eq('status', 'rejected')
-              .gte('rejectedAt', weekStart)
-              .lt('rejectedAt', weekEnd.toISOString())
+              .gte('reviewedAt', weekStart)
+              .lt('reviewedAt', weekEnd.toISOString())
           ])
 
           return {

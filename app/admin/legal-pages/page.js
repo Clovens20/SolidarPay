@@ -35,7 +35,15 @@ export default function LegalPagesEditor() {
         .select('*')
         .eq('enabled', true)
 
-      if (error) throw error
+      if (error) {
+        // Si la table n'existe pas, initialiser avec des pages vides
+        if (error.code === 'PGRST205' || error.message?.includes('does not exist')) {
+          console.warn('Table legal_pages n\'existe pas encore. Utilisez le script SQL pour la créer.')
+          setPages({})
+          return
+        }
+        throw error
+      }
 
       const pagesMap = {}
       data?.forEach(page => {
@@ -51,7 +59,9 @@ export default function LegalPagesEditor() {
       console.error('Error loading legal pages:', error)
       toast({
         title: 'Erreur',
-        description: 'Impossible de charger les pages légales',
+        description: error.code === 'PGRST205' 
+          ? 'La table n\'existe pas encore. Exécutez le script SQL fourni.'
+          : 'Impossible de charger les pages légales',
         variant: 'destructive'
       })
     } finally {

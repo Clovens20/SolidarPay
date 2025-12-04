@@ -39,7 +39,15 @@ export default function LandingPageEditor() {
         .select('*')
         .order('display_order')
 
-      if (error) throw error
+      if (error) {
+        // Si la table n'existe pas, initialiser avec des sections vides
+        if (error.code === 'PGRST205' || error.message?.includes('does not exist')) {
+          console.warn('Table landing_page_content n\'existe pas encore. Utilisez le script SQL pour la créer.')
+          setSections({})
+          return
+        }
+        throw error
+      }
 
       const sectionsMap = {}
       data?.forEach(section => {
@@ -50,7 +58,9 @@ export default function LandingPageEditor() {
       console.error('Error loading sections:', error)
       toast({
         title: 'Erreur',
-        description: 'Impossible de charger les sections',
+        description: error.code === 'PGRST205' 
+          ? 'La table n\'existe pas encore. Exécutez le script SQL fourni.'
+          : 'Impossible de charger les sections',
         variant: 'destructive'
       })
     } finally {

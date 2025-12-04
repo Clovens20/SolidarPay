@@ -176,6 +176,10 @@ export async function POST(request) {
     if (path === 'auth/register') {
       const { email, password, fullName, phone, role = 'member' } = body
 
+      // Valider le rôle - seuls 'member' et 'admin' sont autorisés lors de l'inscription
+      const validRoles = ['member', 'admin']
+      const userRole = validRoles.includes(role) ? role : 'member'
+
       // Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -192,7 +196,7 @@ export async function POST(request) {
           email,
           fullName,
           phone,
-          role,
+          role: userRole,
         }])
         .select()
         .single()

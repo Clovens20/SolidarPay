@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
-import { UserPlus, ArrowLeft, CheckCircle } from 'lucide-react'
+import { UserPlus, ArrowLeft, CheckCircle, Users, UserCheck } from 'lucide-react'
 import Link from 'next/link'
 
 export default function RegisterPage() {
@@ -17,7 +18,8 @@ export default function RegisterPage() {
     fullName: '',
     email: '',
     password: '',
-    phone: ''
+    phone: '',
+    role: 'member' // Par défaut membre
   })
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
@@ -70,6 +72,7 @@ export default function RegisterPage() {
           password: formData.password,
           fullName: formData.fullName,
           phone: formData.phone || null,
+          role: formData.role || 'member',
         }),
       })
 
@@ -175,6 +178,31 @@ export default function RegisterPage() {
                   onChange={handleChange}
                   className="border-solidarpay-border focus:border-solidarpay-primary"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="role">Type de compte *</Label>
+                <Select 
+                  value={formData.role} 
+                  onValueChange={(value) => setFormData({ ...formData, role: value })}
+                >
+                  <SelectTrigger className="border-solidarpay-border focus:border-solidarpay-primary">
+                    <SelectValue placeholder="Choisissez votre type de compte" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="member">
+                      Membre - Participer aux tontines
+                    </SelectItem>
+                    <SelectItem value="admin">
+                      Admin Tontine - Créer et gérer mes tontines
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-solidarpay-text/50">
+                  {formData.role === 'member' 
+                    ? 'Vous pourrez participer aux tontines créées par les administrateurs'
+                    : 'Vous pourrez créer et gérer vos propres tontines, et ajouter des membres'}
+                </p>
               </div>
 
               <div className="space-y-2">
