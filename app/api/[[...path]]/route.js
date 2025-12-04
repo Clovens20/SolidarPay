@@ -235,6 +235,11 @@ export async function POST(request) {
         return NextResponse.json({ error: 'Utilisateur introuvable dans la base de données' }, { status: 404 })
       }
 
+      // Vérifier que la session existe
+      if (!data.session) {
+        return NextResponse.json({ error: 'Erreur de session' }, { status: 500 })
+      }
+
       return NextResponse.json({ user: userData, session: data.session })
     }
 

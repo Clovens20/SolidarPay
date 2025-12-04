@@ -212,7 +212,7 @@ export default function App() {
         .from('platform_customization')
         .select('value')
         .eq('key', 'logo_url')
-        .single()
+        .maybeSingle()
 
       if (!error && data?.value) {
         // La valeur peut être un JSONB string ou un objet

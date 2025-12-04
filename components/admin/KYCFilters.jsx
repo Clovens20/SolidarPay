@@ -60,12 +60,12 @@ export default function KYCFilters({ filters, setFilters, sortBy, setSortBy }) {
           {/* Score Filter */}
           <div className="space-y-2">
             <Label>Score</Label>
-            <Select value={filters.score} onValueChange={(value) => setFilters({ ...filters, score: value })}>
+            <Select value={filters.score || undefined} onValueChange={(value) => setFilters({ ...filters, score: value || '' })}>
               <SelectTrigger>
                 <SelectValue placeholder="Tous les scores" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Tous les scores</SelectItem>
+                <SelectItem value={undefined}>Tous les scores</SelectItem>
                 <SelectItem value="90-100">90-100% (Haute confiance)</SelectItem>
                 <SelectItem value="70-89">70-89% (Revue recommandée)</SelectItem>
                 <SelectItem value="0-69">0-69% (Faible confiance)</SelectItem>
@@ -86,12 +86,12 @@ export default function KYCFilters({ filters, setFilters, sortBy, setSortBy }) {
           {/* Document Type Filter */}
           <div className="space-y-2">
             <Label>Type de document</Label>
-            <Select value={filters.documentType} onValueChange={(value) => setFilters({ ...filters, documentType: value })}>
+            <Select value={filters.documentType || undefined} onValueChange={(value) => setFilters({ ...filters, documentType: value || '' })}>
               <SelectTrigger>
                 <SelectValue placeholder="Tous les types" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Tous les types</SelectItem>
+                <SelectItem value={undefined}>Tous les types</SelectItem>
                 <SelectItem value="identity">Pièce d'identité</SelectItem>
                 <SelectItem value="proof_of_address">Justificatif de domicile</SelectItem>
                 <SelectItem value="selfie">Selfie</SelectItem>

@@ -384,9 +384,9 @@ export default function MembersTab({ tontineId, tontineName }) {
               </SelectTrigger>
               <SelectContent>
                 {countries.length === 0 ? (
-                  <SelectItem value="" disabled>
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
                     Aucun pays disponible
-                  </SelectItem>
+                  </div>
                 ) : (
                   countries.map((country) => (
                     <SelectItem key={country.code || country.id} value={country.code}>
