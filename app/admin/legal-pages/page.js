@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
-import { Save, Eye, Loader2, Plus, Trash2, FileText, ExternalLink } from 'lucide-react'
+import { Save, Loader2, Plus, Trash2, FileText, ExternalLink } from 'lucide-react'
 import { systemLogger } from '@/lib/system-logger'
 
 const LEGAL_PAGES = [
@@ -33,7 +33,6 @@ export default function LegalPagesEditor() {
       const { data, error } = await supabase
         .from('legal_pages')
         .select('*')
-        .eq('enabled', true)
 
       if (error) {
         // Si la table n'existe pas, initialiser avec des pages vides
@@ -216,22 +215,19 @@ export default function LegalPagesEditor() {
                         <CardDescription>{page.description}</CardDescription>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Switch
-                          checked={pageData.enabled}
-                          onCheckedChange={(checked) => {
-                            updatePage(page.slug, 'enabled', checked)
-                            savePage(page.slug)
-                          }}
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openPreview(page.slug)}
-                          className="gap-2"
-                        >
-                          <Eye className="w-4 h-4" />
-                          Aperçu
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor={`enabled-${page.slug}`} className="text-sm">
+                            {pageData.enabled ? 'Activée' : 'Désactivée'}
+                          </Label>
+                          <Switch
+                            id={`enabled-${page.slug}`}
+                            checked={pageData.enabled !== undefined ? pageData.enabled : true}
+                            onCheckedChange={(checked) => {
+                              updatePage(page.slug, 'enabled', checked)
+                              savePage(page.slug)
+                            }}
+                          />
+                        </div>
                         <Button
                           variant="outline"
                           size="sm"

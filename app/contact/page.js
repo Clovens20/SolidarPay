@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import Navbar from '@/components/landing/Navbar'
 import Footer from '@/components/landing/Footer'
 import { Loader2 } from 'lucide-react'
+import { convertContentToHtml } from '@/lib/markdown-utils'
 
 export default function ContactPage() {
   const [page, setPage] = useState(null)
@@ -17,13 +18,29 @@ export default function ContactPage() {
           .from('legal_pages')
           .select('*')
           .eq('page_slug', 'contact')
-          .eq('enabled', true)
           .single()
 
-        if (error) throw error
-        setPage(data)
+        if (error) {
+          if (error.code === 'PGRST116') {
+            console.log('Page "contact" non trouvée dans la base de données')
+            setPage(null)
+          } else {
+            console.error('Erreur lors du chargement de la page:', error)
+            throw error
+          }
+        } else if (data) {
+          console.log('Page Contact chargée:', {
+            title: data.title,
+            enabled: data.enabled,
+            contentLength: data.content?.length || 0
+          })
+          setPage(data)
+        } else {
+          setPage(null)
+        }
       } catch (err) {
         console.error('Error loading contact page:', err)
+        setPage(null)
       } finally {
         setLoading(false)
       }
@@ -47,11 +64,27 @@ export default function ContactPage() {
         <div className="container mx-auto px-4 sm:px-6 lg:px-8 max-w-4xl">
           {page ? (
             <>
+              {!page.enabled && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                  <p className="text-yellow-800 text-sm">
+                    ⚠️ Cette page est actuellement désactivée. Activez-la dans l'interface d'administration pour qu'elle soit visible publiquement.
+                    </p>
+                </div>
+              )}
               <h1 className="text-4xl font-bold text-solidarpay-text mb-6">{page.title}</h1>
-              <div
-                className="prose prose-lg max-w-none"
-                dangerouslySetInnerHTML={{ __html: page.content }}
-              />
+              {page.content && page.content.trim() && page.content.trim().length > 10 ? (
+                <div
+                  className="prose prose-lg max-w-none"
+                  dangerouslySetInnerHTML={{ __html: convertContentToHtml(page.content) }}
+                />
+              ) : (
+                <div className="text-center py-8">
+                  <p className="text-xl text-solidarpay-text/70 mb-4">Contenu à compléter...</p>
+                  <p className="text-sm text-solidarpay-text/50">
+                    Allez dans <code className="bg-gray-100 px-2 py-1 rounded">/admin/legal-pages</code> pour ajouter le contenu.
+                  </p>
+                </div>
+              )}
             </>
           ) : (
             <div className="text-center">

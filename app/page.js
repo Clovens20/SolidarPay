@@ -16,6 +16,7 @@ import { Toaster } from '@/components/ui/toaster'
 import LandingPage from '@/components/landing/LandingPage'
 import { formatCurrency, getCurrencyInfo } from '@/lib/currency-utils'
 import CompleteProfileModal from '@/components/profile/CompleteProfileModal'
+import TontineMessages from '@/components/member/TontineMessages'
 import { 
   Users, 
   DollarSign, 
@@ -1196,6 +1197,11 @@ export default function App() {
                   </div>
                 </CardContent>
               </Card>
+            )}
+
+            {/* Messages de l'administrateur */}
+            {selectedTontine && (
+              <TontineMessages tontineId={selectedTontine.id} />
             )}
 
             {selectedTontine && activeCycle && (

@@ -19,6 +19,7 @@ import OverviewTab from '@/components/admin-tontine/OverviewTab'
 import MembersTab from '@/components/admin-tontine/MembersTab'
 import CyclesTab from '@/components/admin-tontine/CyclesTab'
 import SettingsTab from '@/components/admin-tontine/SettingsTab'
+import CommunicationTab from '@/components/admin-tontine/CommunicationTab'
 
 export default function ManageTontinePage() {
   const params = useParams()
@@ -153,10 +154,11 @@ export default function ManageTontinePage() {
       </div>
 
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
+        <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>
           <TabsTrigger value="members">Membres</TabsTrigger>
           <TabsTrigger value="cycles">Cycles</TabsTrigger>
+          <TabsTrigger value="communication">Communication</TabsTrigger>
           <TabsTrigger value="settings">Paramètres</TabsTrigger>
         </TabsList>
 
@@ -170,6 +172,10 @@ export default function ManageTontinePage() {
 
         <TabsContent value="cycles" className="mt-6">
           <CyclesTab tontineId={tontine.id} />
+        </TabsContent>
+
+        <TabsContent value="communication" className="mt-6">
+          <CommunicationTab tontineId={tontine.id} tontineName={tontine.name} />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-6">
