@@ -9,8 +9,9 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
-import { UserPlus, ArrowLeft, CheckCircle, Users, UserCheck } from 'lucide-react'
+import { UserPlus, ArrowLeft, CheckCircle, Users, UserCheck, Globe } from 'lucide-react'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -19,12 +20,18 @@ export default function RegisterPage() {
     email: '',
     password: '',
     phone: '',
+    country: '',
     role: 'member' // Par défaut membre
   })
+  const [countries, setCountries] = useState([])
   const [loading, setLoading] = useState(false)
+  const [loadingCountries, setLoadingCountries] = useState(true)
   const { toast } = useToast()
 
   useEffect(() => {
+    // Charger les pays disponibles
+    loadCountries()
+    
     // Vérifier si l'utilisateur est déjà connecté
     const savedSession = localStorage.getItem('solidarpay_session')
     const savedUser = localStorage.getItem('solidarpay_user')
@@ -47,6 +54,36 @@ export default function RegisterPage() {
     }
   }, [router])
 
+  const loadCountries = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('payment_countries')
+        .select('code, name')
+        .eq('enabled', true)
+        .order('name', { ascending: true })
+
+      if (error) throw error
+      setCountries(data || [])
+    } catch (error) {
+      console.error('Error loading countries:', error)
+      toast({
+        title: 'Erreur',
+        description: 'Impossible de charger les pays. Veuillez réessayer.',
+        variant: 'destructive',
+      })
+    } finally {
+      setLoadingCountries(false)
+    }
+  }
+
+  const getCountryFlag = (countryCode) => {
+    const flags = {
+      'CA': '🇨🇦', 'US': '🇺🇸', 'FR': '🇫🇷', 'BE': '🇧🇪', 'CH': '🇨🇭',
+      'MX': '🇲🇽', 'CL': '🇨🇱', 'HT': '🇭🇹', 'SN': '🇸🇳', 'CM': '🇨🇲'
+    }
+    return flags[countryCode] || '🌍'
+  }
+
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -64,6 +101,10 @@ export default function RegisterPage() {
         throw new Error('Le mot de passe doit contenir au moins 6 caractères')
       }
 
+      if (!formData.country) {
+        throw new Error('Veuillez sélectionner votre pays')
+      }
+
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -72,6 +113,7 @@ export default function RegisterPage() {
           password: formData.password,
           fullName: formData.fullName,
           phone: formData.phone || null,
+          country: formData.country,
           role: formData.role || 'member',
         }),
       })
@@ -178,6 +220,48 @@ export default function RegisterPage() {
                   onChange={handleChange}
                   className="border-solidarpay-border focus:border-solidarpay-primary"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="country">
+                  <Globe className="w-4 h-4 inline mr-2" />
+                  Pays de résidence *
+                </Label>
+                {loadingCountries ? (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-solidarpay-primary"></div>
+                    <span className="ml-2 text-sm text-solidarpay-text/70">Chargement des pays...</span>
+                  </div>
+                ) : (
+                  <Select 
+                    value={formData.country} 
+                    onValueChange={(value) => setFormData({ ...formData, country: value })}
+                    required
+                  >
+                    <SelectTrigger className="border-solidarpay-border focus:border-solidarpay-primary">
+                      <SelectValue placeholder="Sélectionnez votre pays" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {countries.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-solidarpay-text/70">
+                          Aucun pays disponible
+                        </div>
+                      ) : (
+                        countries.map((country) => (
+                          <SelectItem key={country.code} value={country.code}>
+                            <span className="flex items-center gap-2">
+                              <span>{getCountryFlag(country.code)}</span>
+                              <span>{country.name}</span>
+                            </span>
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+                <p className="text-xs text-solidarpay-text/50">
+                  Cette information nous aide à personnaliser votre expérience
+                </p>
               </div>
 
               <div className="space-y-2">

@@ -5,8 +5,12 @@ import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import AdminTontineHeader from '@/components/admin-tontine/AdminTontineHeader'
 import AdminTontineSidebar from '@/components/admin-tontine/AdminTontineSidebar'
+import { useIsMobile } from '@/hooks/use-mobile'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
 
 export default function AdminTontineLayout({ children }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const isMobile = useIsMobile()
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
@@ -148,10 +152,25 @@ export default function AdminTontineLayout({ children }) {
 
   return (
     <div className="min-h-screen bg-solidarpay-bg">
-      <AdminTontineHeader user={user} />
+      <AdminTontineHeader user={user} onMenuClick={() => setMobileMenuOpen(true)} />
       <div className="flex pt-16">
-        <AdminTontineSidebar pathname={pathname} />
-        <main className="flex-1 p-6 ml-64">
+        {/* Desktop Sidebar */}
+        <aside className="hidden md:block fixed left-0 top-16 bottom-0 w-64 bg-white border-r border-solidarpay-border overflow-y-auto z-40">
+          <AdminTontineSidebar pathname={pathname} onNavigate={() => {}} />
+        </aside>
+
+        {/* Mobile Sidebar */}
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetContent side="left" className="w-64 p-0">
+            <AdminTontineSidebar 
+              pathname={pathname} 
+              onNavigate={() => setMobileMenuOpen(false)} 
+            />
+          </SheetContent>
+        </Sheet>
+
+        {/* Main Content */}
+        <main className="flex-1 w-full md:ml-64 p-4 md:p-6">
           {children}
         </main>
       </div>

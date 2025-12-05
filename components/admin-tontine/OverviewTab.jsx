@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { formatCurrency } from '@/lib/currency-utils'
 import { Users, DollarSign, Calendar, TrendingUp } from 'lucide-react'
 
 export default function OverviewTab({ tontine }) {
@@ -79,7 +80,7 @@ export default function OverviewTab({ tontine }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              ${parseFloat(tontine.contributionAmount).toFixed(2)}
+              {formatCurrency(tontine.contributionAmount, tontine.currency || 'CAD')}
             </div>
             <p className="text-xs text-muted-foreground">
               {tontine.frequency === 'monthly' ? 'Par mois' : 
@@ -95,7 +96,9 @@ export default function OverviewTab({ tontine }) {
             <TrendingUp className="w-4 h-4 text-solidarpay-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${stats.totalCollected.toFixed(2)}</div>
+            <div className="text-2xl font-bold">
+              {formatCurrency(stats.totalCollected, tontine.currency || 'CAD')}
+            </div>
           </CardContent>
         </Card>
 

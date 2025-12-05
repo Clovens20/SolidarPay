@@ -31,12 +31,13 @@ export default function SearchMembersPage() {
   const router = useRouter()
   const { toast } = useToast()
   
-  const [selectedCountry, setSelectedCountry] = useState('')
+  const [selectedCountry, setSelectedCountry] = useState('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [groupedResults, setGroupedResults] = useState({})
   const [countries, setCountries] = useState([])
   const [countryNames, setCountryNames] = useState({})
+  const [loadingCountries, setLoadingCountries] = useState(true)
   const [searching, setSearching] = useState(false)
   const [kycModal, setKycModal] = useState(null)
   const [viewProfileModal, setViewProfileModal] = useState(null)
@@ -47,16 +48,28 @@ export default function SearchMembersPage() {
 
   const loadCountries = async () => {
     try {
+      setLoadingCountries(true)
+      console.log('🔍 Loading countries...')
+      
       const { data, error } = await supabase
         .from('payment_countries')
-        .select('code, name')
+        .select('code, name, enabled')
         .eq('enabled', true)
         .order('name', { ascending: true })
 
       if (error) {
-        console.error('Error loading countries:', error)
+        console.error('❌ Error loading countries:', error)
+        toast({
+          title: 'Erreur',
+          description: 'Impossible de charger les pays: ' + error.message,
+          variant: 'destructive'
+        })
+        setCountries([])
         return
       }
+      
+      console.log('✅ Countries loaded:', data)
+      console.log('📊 Number of countries:', data?.length || 0)
       
       setCountries(data || [])
       
@@ -66,8 +79,48 @@ export default function SearchMembersPage() {
         countryMap[country.code] = country.name
       })
       setCountryNames(countryMap)
+      
+      if (!data || data.length === 0) {
+        console.warn('⚠️ No countries found with enabled=true')
+        console.warn('Trying to load all countries without filter...')
+        
+        // Essayer sans le filtre enabled pour voir si c'est un problème de permissions
+        const { data: allData, error: allError } = await supabase
+          .from('payment_countries')
+          .select('code, name, enabled')
+          .order('name', { ascending: true })
+        
+        if (!allError && allData && allData.length > 0) {
+          console.log('✅ Found countries without enabled filter:', allData)
+          // Filtrer manuellement les pays activés
+          const enabledCountries = allData.filter(c => c.enabled === true)
+          console.log('✅ Enabled countries:', enabledCountries)
+          setCountries(enabledCountries)
+          
+          const countryMap2 = {}
+          enabledCountries.forEach(country => {
+            countryMap2[country.code] = country.name
+          })
+          setCountryNames(countryMap2)
+        } else {
+          console.error('❌ Still no countries found:', allError)
+          toast({
+            title: 'Aucun pays disponible',
+            description: 'Aucun pays activé trouvé. Vérifiez la configuration.',
+            variant: 'destructive'
+          })
+        }
+      }
     } catch (error) {
-      console.error('Error loading countries:', error)
+      console.error('❌ Exception loading countries:', error)
+      toast({
+        title: 'Erreur',
+        description: 'Erreur lors du chargement des pays: ' + error.message,
+        variant: 'destructive'
+      })
+      setCountries([])
+    } finally {
+      setLoadingCountries(false)
     }
   }
 
@@ -215,8 +268,8 @@ export default function SearchMembersPage() {
         .or(`fullName.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`)
         .eq('role', 'member')
 
-      // Filter by country if selected
-      if (selectedCountry) {
+      // Filter by country if selected (mais pas si 'all')
+      if (selectedCountry && selectedCountry !== 'all') {
         query = query.eq('country', selectedCountry)
       }
 
@@ -310,22 +363,67 @@ export default function SearchMembersPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Country Filter (Optional) */}
+          {/* Country Filter (Optional) - Select avec fond blanc opaque */}
           <div className="space-y-2">
-            <Label htmlFor="country">Filtrer par pays (optionnel)</Label>
-            <Select value={selectedCountry || undefined} onValueChange={setSelectedCountry}>
-              <SelectTrigger id="country">
-                <SelectValue placeholder="Tous les pays" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={undefined}>Tous les pays</SelectItem>
-                {countries.map((country) => (
-                  <SelectItem key={country.code} value={country.code}>
-                    {getCountryFlag(country.code)} {country.name}
+            <Label>Filtrer par pays (optionnel)</Label>
+            {loadingCountries ? (
+              <div className="text-sm text-solidarpay-text/50 italic flex items-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-solidarpay-primary"></div>
+                Chargement des pays...
+              </div>
+            ) : (
+              <Select
+                value={selectedCountry || 'all'}
+                onValueChange={(value) => {
+                  console.log('Country selected:', value)
+                  setSelectedCountry(value)
+                }}
+              >
+                <SelectTrigger className="w-full bg-white/95 backdrop-blur-sm border border-gray-200">
+                  <SelectValue placeholder="Sélectionner un pays">
+                    {selectedCountry === 'all' || !selectedCountry
+                      ? '🌍 Tous les pays'
+                      : `${getCountryFlag(selectedCountry)} ${countryNames[selectedCountry] || countries.find(c => c.code === selectedCountry)?.name || selectedCountry}`}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="bg-white/95 backdrop-blur-sm border border-gray-200 max-h-[300px]">
+                  <SelectItem value="all" className="cursor-pointer hover:bg-gray-100">
+                    <span className="flex items-center gap-2">
+                      <span>🌍</span>
+                      <span>Tous les pays</span>
+                    </span>
                   </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  {countries.length > 0 ? (
+                    countries.map((country) => {
+                      if (!country || !country.code) {
+                        return null
+                      }
+                      return (
+                        <SelectItem
+                          key={country.code}
+                          value={country.code}
+                          className="cursor-pointer hover:bg-gray-100"
+                        >
+                          <span className="flex items-center gap-2">
+                            <span>{getCountryFlag(country.code)}</span>
+                            <span>{country.name}</span>
+                          </span>
+                        </SelectItem>
+                      )
+                    })
+                  ) : (
+                    <SelectItem value="no-countries" disabled>
+                      Aucun pays disponible
+                    </SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            )}
+            <p className="text-xs text-solidarpay-text/70">
+              {selectedCountry === 'all' || !selectedCountry
+                ? 'Recherche dans tous les pays'
+                : `Filtrage actif : ${countryNames[selectedCountry] || countries.find(c => c.code === selectedCountry)?.name || selectedCountry}`}
+            </p>
           </div>
 
           {/* Search Input */}

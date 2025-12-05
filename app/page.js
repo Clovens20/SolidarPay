@@ -14,6 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import LandingPage from '@/components/landing/LandingPage'
+import { formatCurrency, getCurrencyInfo } from '@/lib/currency-utils'
+import CompleteProfileModal from '@/components/profile/CompleteProfileModal'
 import { 
   Users, 
   DollarSign, 
@@ -61,6 +63,8 @@ export default function App() {
   const [kycStatus, setKycStatus] = useState(null)
   const [kycLoading, setKycLoading] = useState(false)
   const [showKYCAlert, setShowKYCAlert] = useState(true)
+  const [showCompleteProfile, setShowCompleteProfile] = useState(false)
+  const [hasPaymentMethod, setHasPaymentMethod] = useState(false)
 
   useEffect(() => {
     checkAuth()
@@ -100,6 +104,54 @@ export default function App() {
     } finally {
       setKycLoading(false)
     }
+  }
+
+  const checkProfileCompletion = async () => {
+    if (!user?.id) return
+
+    try {
+      // Vérifier si l'utilisateur a un pays
+      const needsCountry = !user.country
+
+      // Vérifier si l'utilisateur a au moins une méthode de paiement active
+      const { data: paymentMethods, error } = await supabase
+        .from('user_payment_methods')
+        .select('id')
+        .eq('userId', user.id)
+        .eq('isActive', true)
+        .limit(1)
+
+      const hasPayment = paymentMethods && paymentMethods.length > 0
+      setHasPaymentMethod(hasPayment)
+
+      // Afficher la modal si le profil est incomplet
+      if (needsCountry || !hasPayment) {
+        setShowCompleteProfile(true)
+      }
+    } catch (error) {
+      console.error('Error checking profile completion:', error)
+    }
+  }
+
+  const handleProfileComplete = async () => {
+    // Recharger les données utilisateur
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      const { data: userData } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', session.user.id)
+        .single()
+      
+      if (userData) {
+        setUser(userData)
+        localStorage.setItem('solidarpay_user', JSON.stringify(userData))
+      }
+    }
+    
+    // Recharger les méthodes de paiement
+    await checkProfileCompletion()
+    setShowCompleteProfile(false)
   }
 
   const checkAuth = async () => {
@@ -151,9 +203,55 @@ export default function App() {
 
   const loadData = async () => {
     try {
-      // Load tontines
-      const tontinesRes = await fetch('/api/tontines')
-      const tontinesData = await tontinesRes.json()
+      if (!user) return
+
+      let tontinesData = []
+
+      // Si l'utilisateur est admin, charger ses tontines (où il est admin)
+      if (user.role === 'admin') {
+        const { data: adminTontines, error: adminError } = await supabase
+          .from('tontines')
+          .select(`
+            *,
+            admin:adminId (id, fullName, email)
+          `)
+          .eq('adminId', user.id)
+          .order('createdAt', { ascending: false })
+
+        if (adminError) throw adminError
+        tontinesData = adminTontines || []
+      }
+      // Si l'utilisateur est membre, charger uniquement les tontines où il est membre
+      else if (user.role === 'member') {
+        // Récupérer les IDs des tontines où l'utilisateur est membre
+        const { data: memberTontines, error: memberError } = await supabase
+          .from('tontine_members')
+          .select('tontineId')
+          .eq('userId', user.id)
+
+        if (memberError) throw memberError
+
+        const tontineIds = (memberTontines || []).map(m => m.tontineId)
+
+        // Si l'utilisateur est membre d'au moins une tontine, les charger
+        if (tontineIds.length > 0) {
+          const { data: tontines, error: tontinesError } = await supabase
+            .from('tontines')
+            .select(`
+              *,
+              admin:adminId (id, fullName, email)
+            `)
+            .in('id', tontineIds)
+            .order('createdAt', { ascending: false })
+
+          if (tontinesError) throw tontinesError
+          tontinesData = tontines || []
+        } else {
+          // L'utilisateur n'est membre d'aucune tontine
+          tontinesData = []
+        }
+      }
+
       setTontines(tontinesData)
 
       // Load all users (for admin)
@@ -179,6 +277,44 @@ export default function App() {
 
   const selectTontine = async (tontineId) => {
     try {
+      if (!user || !tontineId) return
+
+      // Pour les membres, vérifier qu'ils ont accès à cette tontine
+      if (user.role === 'member') {
+        const { data: membership, error: membershipError } = await supabase
+          .from('tontine_members')
+          .select('id')
+          .eq('tontineId', tontineId)
+          .eq('userId', user.id)
+          .single()
+
+        if (membershipError || !membership) {
+          toast({
+            title: 'Accès refusé',
+            description: 'Vous n\'avez pas accès à cette tontine.',
+            variant: 'destructive',
+          })
+          return
+        }
+      }
+      // Pour les admins, vérifier qu'ils sont admin de cette tontine
+      else if (user.role === 'admin') {
+        const { data: tontine, error: tontineError } = await supabase
+          .from('tontines')
+          .select('adminId')
+          .eq('id', tontineId)
+          .single()
+
+        if (tontineError || !tontine || tontine.adminId !== user.id) {
+          toast({
+            title: 'Accès refusé',
+            description: 'Vous n\'êtes pas administrateur de cette tontine.',
+            variant: 'destructive',
+          })
+          return
+        }
+      }
+
       // Load tontine details with members
       const tontineRes = await fetch(`/api/tontines/${tontineId}`)
       const tontineData = await tontineRes.json()
@@ -256,11 +392,13 @@ export default function App() {
 
     const beneficiary = activeCycle.beneficiary
     const amount = selectedTontine.contributionAmount
+    const currency = selectedTontine.currency || 'CAD'
+    const currencyInfo = getCurrencyInfo(currency)
     const kohoEmail = selectedTontine.kohoReceiverEmail
 
     const subject = encodeURIComponent(`Cotisation SolidarPay - ${selectedTontine.name}`)
     const body = encodeURIComponent(
-      `Bonjour,\n\nJe souhaite envoyer ma cotisation de ${amount} CAD via Interac e-Transfer.\n\nBénéficiaire: ${beneficiary?.fullName}\nEmail KOHO: ${kohoEmail}\n\nMerci!`
+      `Bonjour,\n\nJe souhaite envoyer ma cotisation de ${formatCurrency(amount, currency)} via Interac e-Transfer.\n\nBénéficiaire: ${beneficiary?.fullName}\nEmail KOHO: ${kohoEmail}\n\nMerci!`
     )
 
     window.open(`mailto:${kohoEmail}?subject=${subject}&body=${body}`, '_blank')
@@ -482,16 +620,25 @@ export default function App() {
 
   // Main App
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-cyan-50">
+    <>
+      {/* Modal de complétion du profil */}
+      {user && (user.role === 'member' || user.role === 'admin') && (
+        <CompleteProfileModal
+          user={user}
+          open={showCompleteProfile}
+          onComplete={handleProfileComplete}
+        />
+      )}
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-cyan-50">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="container mx-auto px-4 py-3 md:py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2 md:gap-4">
             {logoUrl ? (
               <img 
                 src={logoUrl} 
                 alt="SolidarPay" 
-                className="h-12 w-12 object-contain bg-white rounded-full shadow"
+                className="h-8 w-8 md:h-12 md:w-12 object-contain bg-white rounded-full shadow"
                 onError={(e) => {
                   // Si le logo personnalisé échoue, utiliser le logo par défaut avec lettre S
                   e.target.style.display = 'none'
@@ -500,19 +647,19 @@ export default function App() {
                 }}
               />
             ) : null}
-            <div className={`w-12 h-12 bg-gradient-to-br from-cyan-600 to-blue-600 rounded-lg flex items-center justify-center ${logoUrl ? 'hidden' : ''}`}>
-              <span className="text-white font-bold text-lg">S</span>
+            <div className={`w-8 h-8 md:w-12 md:h-12 bg-gradient-to-br from-cyan-600 to-blue-600 rounded-lg flex items-center justify-center ${logoUrl ? 'hidden' : ''}`}>
+              <span className="text-white font-bold text-sm md:text-lg">S</span>
             </div>
             <div>
-              <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent">
+              <h1 className="text-lg md:text-2xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent">
                 SolidarPay
               </h1>
-              <p className="text-sm text-slate-600">Tontine digitalisée</p>
+              <p className="hidden sm:block text-xs md:text-sm text-slate-600">Tontine digitalisée</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <p className="text-sm font-medium">{user.fullName}</p>
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="hidden sm:block text-right">
+              <p className="text-xs md:text-sm font-medium">{user.fullName}</p>
               <Badge variant={user.role === 'admin' ? 'default' : 'secondary'} className="text-xs">
                 {user.role === 'admin' ? 'Administrateur' : 'Membre'}
               </Badge>
@@ -522,13 +669,13 @@ export default function App() {
                 variant="outline" 
                 size="sm"
                 onClick={() => router.push('/profile')}
-                className="flex items-center gap-2"
+                className="hidden md:flex items-center gap-2"
               >
                 <User className="h-4 w-4" />
-                Mon Profil
+                <span className="hidden lg:inline">Mon Profil</span>
               </Button>
             )}
-            <Button variant="outline" size="icon" onClick={handleLogout}>
+            <Button variant="outline" size="icon" onClick={handleLogout} className="h-9 w-9 md:h-10 md:w-10">
               <LogOut className="h-4 w-4" />
             </Button>
           </div>
@@ -536,14 +683,14 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-4 md:py-8">
         {user.role === 'admin' ? (
           // ADMIN VIEW
           <Tabs defaultValue="dashboard" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-8">
-              <TabsTrigger value="dashboard">Tableau de bord</TabsTrigger>
-              <TabsTrigger value="management">Gestion</TabsTrigger>
-              <TabsTrigger value="create">Nouvelle Tontine</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-3 mb-4 md:mb-8 text-xs sm:text-sm">
+              <TabsTrigger value="dashboard" className="text-xs sm:text-sm">Tableau de bord</TabsTrigger>
+              <TabsTrigger value="management" className="text-xs sm:text-sm">Gestion</TabsTrigger>
+              <TabsTrigger value="create" className="text-xs sm:text-sm">Nouvelle Tontine</TabsTrigger>
             </TabsList>
 
             <TabsContent value="dashboard" className="space-y-6">
@@ -574,7 +721,7 @@ export default function App() {
               {selectedTontine && (
                 <>
                   {/* Stats Cards */}
-                  <div className="grid gap-4 md:grid-cols-4">
+                  <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
                     <Card>
                       <CardHeader className="flex flex-row items-center justify-between pb-2">
                         <CardTitle className="text-sm font-medium">Membres</CardTitle>
@@ -590,7 +737,9 @@ export default function App() {
                         <DollarSign className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">{selectedTontine.contributionAmount} CAD</div>
+                        <div className="text-2xl font-bold">
+                          {formatCurrency(selectedTontine.contributionAmount, selectedTontine.currency || 'CAD')}
+                        </div>
                       </CardContent>
                     </Card>
                     <Card>
@@ -610,9 +759,11 @@ export default function App() {
                         <TrendingUp className="h-4 w-4 text-muted-foreground" />
                       </CardHeader>
                       <CardContent>
-                        <div className="text-2xl font-bold">{activeCycle?.totalCollected || 0} CAD</div>
+                        <div className="text-2xl font-bold">
+                          {formatCurrency(activeCycle?.totalCollected || 0, selectedTontine?.currency || 'CAD')}
+                        </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          sur {activeCycle?.totalExpected || 0} CAD
+                          sur {formatCurrency(activeCycle?.totalExpected || 0, selectedTontine?.currency || 'CAD')}
                         </p>
                       </CardContent>
                     </Card>
@@ -637,20 +788,20 @@ export default function App() {
                           <p className="text-sm text-muted-foreground">{activeCycle.beneficiary?.email}</p>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-4">
-                          <div className="bg-white p-4 rounded-lg text-center">
-                            <CheckCircle className="h-6 w-6 mx-auto mb-2 text-green-600" />
-                            <p className="text-2xl font-bold">{validatedCount}</p>
+                        <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                          <div className="bg-white p-3 sm:p-4 rounded-lg text-center">
+                            <CheckCircle className="h-5 w-5 sm:h-6 sm:w-6 mx-auto mb-2 text-green-600" />
+                            <p className="text-lg sm:text-2xl font-bold">{validatedCount}</p>
                             <p className="text-xs text-muted-foreground">Validés</p>
                           </div>
-                          <div className="bg-white p-4 rounded-lg text-center">
-                            <Clock className="h-6 w-6 mx-auto mb-2 text-yellow-600" />
-                            <p className="text-2xl font-bold">{pendingValidationCount}</p>
+                          <div className="bg-white p-3 sm:p-4 rounded-lg text-center">
+                            <Clock className="h-5 w-5 sm:h-6 sm:w-6 mx-auto mb-2 text-yellow-600" />
+                            <p className="text-lg sm:text-2xl font-bold">{pendingValidationCount}</p>
                             <p className="text-xs text-muted-foreground">En attente</p>
                           </div>
-                          <div className="bg-white p-4 rounded-lg text-center">
-                            <AlertCircle className="h-6 w-6 mx-auto mb-2 text-red-600" />
-                            <p className="text-2xl font-bold">{totalMembers - validatedCount - pendingValidationCount}</p>
+                          <div className="bg-white p-3 sm:p-4 rounded-lg text-center">
+                            <AlertCircle className="h-5 w-5 sm:h-6 sm:w-6 mx-auto mb-2 text-red-600" />
+                            <p className="text-lg sm:text-2xl font-bold">{totalMembers - validatedCount - pendingValidationCount}</p>
                             <p className="text-xs text-muted-foreground">Non payés</p>
                           </div>
                         </div>
@@ -692,7 +843,9 @@ export default function App() {
                               <div className="flex items-center gap-3">
                                 <div className="flex flex-col">
                                   <p className="font-medium">{contrib.user?.fullName}</p>
-                                  <p className="text-sm text-muted-foreground">{contrib.amount} CAD</p>
+                                  <p className="text-sm text-muted-foreground">
+                                    {formatCurrency(contrib.amount, selectedTontine?.currency || 'CAD')}
+                                  </p>
                                 </div>
                               </div>
                               <div className="flex items-center gap-2">
@@ -737,7 +890,7 @@ export default function App() {
                       <CardTitle>Paramètres de la tontine</CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                           <Label>Nom</Label>
                           <p className="text-lg font-medium">{selectedTontine.name}</p>
@@ -748,7 +901,9 @@ export default function App() {
                         </div>
                         <div>
                           <Label>Montant</Label>
-                          <p className="text-lg font-medium">{selectedTontine.contributionAmount} CAD</p>
+                          <p className="text-lg font-medium">
+                            {formatCurrency(selectedTontine.contributionAmount, selectedTontine.currency || 'CAD')}
+                          </p>
                         </div>
                         <div>
                           <Label>Fréquence</Label>
@@ -811,7 +966,7 @@ export default function App() {
                               {new Date(cycle.startDate).toLocaleDateString('fr-FR')} - {new Date(cycle.endDate).toLocaleDateString('fr-FR')}
                             </p>
                             <p className="text-sm font-medium mt-2">
-                              Collecté: {cycle.totalCollected} / {cycle.totalExpected} CAD
+                              Collecté: {formatCurrency(cycle.totalCollected, selectedTontine?.currency || 'CAD')} / {formatCurrency(cycle.totalExpected, selectedTontine?.currency || 'CAD')}
                             </p>
                           </div>
                         ))}
@@ -840,9 +995,9 @@ export default function App() {
                         required
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="amount">Montant de cotisation (CAD)</Label>
+                        <Label htmlFor="amount">Montant de cotisation</Label>
                         <Input
                           id="amount"
                           type="number"
@@ -995,10 +1150,13 @@ export default function App() {
             )}
 
             {/* Tontine Selector */}
-            {tontines.length > 0 && (
+            {tontines.length > 0 ? (
               <Card>
                 <CardHeader>
                   <CardTitle>Mes tontines</CardTitle>
+                  <CardDescription>
+                    {tontines.length} {tontines.length === 1 ? 'tontine' : 'tontines'} à votre disposition
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <Select 
@@ -1014,6 +1172,28 @@ export default function App() {
                       ))}
                     </SelectContent>
                   </Select>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Mes tontines</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-center py-8">
+                    <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                      <Users className="w-8 h-8 text-gray-400" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                      Aucune tontine
+                    </h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Vous n'êtes actuellement membre d'aucune tontine.
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      Contactez un administrateur de tontine pour être ajouté à une tontine existante.
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
             )}
@@ -1035,7 +1215,9 @@ export default function App() {
                     <div className="bg-white p-6 rounded-lg text-center">
                       <p className="text-sm text-muted-foreground mb-2">Bénéficiaire de ce cycle</p>
                       <p className="text-3xl font-bold text-cyan-600 mb-1">{activeCycle.beneficiary?.fullName}</p>
-                      <p className="text-sm text-muted-foreground">recevra {activeCycle.totalExpected} CAD</p>
+                      <p className="text-sm text-muted-foreground">
+                        recevra {formatCurrency(activeCycle.totalExpected, selectedTontine?.currency || 'CAD')}
+                      </p>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
@@ -1051,8 +1233,10 @@ export default function App() {
                       </div>
                       <div className="bg-white p-4 rounded-lg text-center">
                         <DollarSign className="h-6 w-6 mx-auto mb-2 text-blue-600" />
-                        <p className="text-2xl font-bold">{activeCycle.totalCollected}</p>
-                        <p className="text-xs text-muted-foreground">CAD collectés</p>
+                        <p className="text-2xl font-bold">
+                          {formatCurrency(activeCycle.totalCollected, selectedTontine?.currency || 'CAD')}
+                        </p>
+                        <p className="text-xs text-muted-foreground">collectés</p>
                       </div>
                     </div>
                   </CardContent>
@@ -1070,7 +1254,9 @@ export default function App() {
                     <div className="bg-slate-50 p-4 rounded-lg">
                       <div className="flex items-center justify-between mb-3">
                         <p className="text-sm text-muted-foreground">Montant à envoyer</p>
-                        <p className="text-2xl font-bold text-cyan-600">{selectedTontine.contributionAmount} CAD</p>
+                        <p className="text-2xl font-bold text-cyan-600">
+                          {formatCurrency(selectedTontine.contributionAmount, selectedTontine.currency || 'CAD')}
+                        </p>
                       </div>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
@@ -1102,7 +1288,7 @@ export default function App() {
                           
                           <Button 
                             onClick={() => copyToClipboard(
-                              `Montant: ${selectedTontine.contributionAmount} CAD\nEmail: ${selectedTontine.kohoReceiverEmail}`,
+                              `Montant: ${formatCurrency(selectedTontine.contributionAmount, selectedTontine.currency || 'CAD')}\nEmail: ${selectedTontine.kohoReceiverEmail}`,
                               'Informations de paiement'
                             )}
                             variant="outline"
@@ -1232,5 +1418,6 @@ export default function App() {
 
       <Toaster />
     </div>
+    </>
   )
 }

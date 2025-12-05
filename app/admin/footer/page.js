@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import { Save, Eye, Loader2, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
-import { systemLogger } from '@/lib/system-logger'
+import { logSystemEvent } from '@/lib/system-logger'
 
 const FOOTER_SECTIONS = [
   { id: 'brand', name: 'Marque', icon: '🏷️' },
@@ -138,7 +138,7 @@ export default function FooterEditor() {
 
       if (error) throw error
 
-      await systemLogger.log('footer_updated', {
+      await logSystemEvent('system_customization', `Section footer mise à jour: ${sectionId}`, {
         section: sectionId,
         action: 'Section footer mise à jour'
       })
@@ -174,7 +174,7 @@ export default function FooterEditor() {
 
       if (error) throw error
 
-      await systemLogger.log('footer_section_deleted', {
+      await logSystemEvent('system_customization', `Section footer supprimée: ${sectionId}`, {
         section: sectionId
       })
 
@@ -234,44 +234,59 @@ export default function FooterEditor() {
           <div className="space-y-4">
             <Label>Liens de navigation</Label>
             {(content.links || []).map((link, index) => (
-              <div key={index} className="flex gap-2 items-end">
-                <div className="flex-1 space-y-2">
-                  <Input
-                    placeholder="Label du lien"
-                    value={link.label || ''}
-                    onChange={(e) => {
-                      const newLinks = [...(content.links || [])]
-                      newLinks[index] = { ...newLinks[index], label: e.target.value }
+              <div key={index} className="space-y-3 p-4 border rounded-lg">
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      placeholder="Label du lien"
+                      value={link.label || ''}
+                      onChange={(e) => {
+                        const newLinks = [...(content.links || [])]
+                        newLinks[index] = { ...newLinks[index], label: e.target.value }
+                        updateSectionContent(sectionId, 'links', newLinks)
+                      }}
+                    />
+                    <Input
+                      placeholder="URL (ex: /about)"
+                      value={link.href || ''}
+                      onChange={(e) => {
+                        const newLinks = [...(content.links || [])]
+                        newLinks[index] = { ...newLinks[index], href: e.target.value }
+                        updateSectionContent(sectionId, 'links', newLinks)
+                      }}
+                    />
+                    <div className="space-y-1">
+                      <Label className="text-sm">Contenu / Description (optionnel)</Label>
+                      <Textarea
+                        placeholder="Description ou contenu du lien..."
+                        value={link.content || ''}
+                        onChange={(e) => {
+                          const newLinks = [...(content.links || [])]
+                          newLinks[index] = { ...newLinks[index], content: e.target.value }
+                          updateSectionContent(sectionId, 'links', newLinks)
+                        }}
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      const newLinks = (content.links || []).filter((_, i) => i !== index)
                       updateSectionContent(sectionId, 'links', newLinks)
                     }}
-                  />
-                  <Input
-                    placeholder="URL (ex: /about)"
-                    value={link.href || ''}
-                    onChange={(e) => {
-                      const newLinks = [...(content.links || [])]
-                      newLinks[index] = { ...newLinks[index], href: e.target.value }
-                      updateSectionContent(sectionId, 'links', newLinks)
-                    }}
-                  />
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => {
-                    const newLinks = (content.links || []).filter((_, i) => i !== index)
-                    updateSectionContent(sectionId, 'links', newLinks)
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
               </div>
             ))}
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
-                const newLinks = [...(content.links || []), { label: '', href: '' }]
+                const newLinks = [...(content.links || []), { label: '', href: '', content: '' }]
                 updateSectionContent(sectionId, 'links', newLinks)
               }}
             >
@@ -286,44 +301,59 @@ export default function FooterEditor() {
           <div className="space-y-4">
             <Label>Liens légaux</Label>
             {(content.links || []).map((link, index) => (
-              <div key={index} className="flex gap-2 items-end">
-                <div className="flex-1 space-y-2">
-                  <Input
-                    placeholder="Label du lien"
-                    value={link.label || ''}
-                    onChange={(e) => {
-                      const newLinks = [...(content.links || [])]
-                      newLinks[index] = { ...newLinks[index], label: e.target.value }
+              <div key={index} className="space-y-3 p-4 border rounded-lg">
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      placeholder="Label du lien"
+                      value={link.label || ''}
+                      onChange={(e) => {
+                        const newLinks = [...(content.links || [])]
+                        newLinks[index] = { ...newLinks[index], label: e.target.value }
+                        updateSectionContent(sectionId, 'links', newLinks)
+                      }}
+                    />
+                    <Input
+                      placeholder="URL (ex: /terms)"
+                      value={link.href || ''}
+                      onChange={(e) => {
+                        const newLinks = [...(content.links || [])]
+                        newLinks[index] = { ...newLinks[index], href: e.target.value }
+                        updateSectionContent(sectionId, 'links', newLinks)
+                      }}
+                    />
+                    <div className="space-y-1">
+                      <Label className="text-sm">Contenu / Description (optionnel)</Label>
+                      <Textarea
+                        placeholder="Description ou contenu du lien..."
+                        value={link.content || ''}
+                        onChange={(e) => {
+                          const newLinks = [...(content.links || [])]
+                          newLinks[index] = { ...newLinks[index], content: e.target.value }
+                          updateSectionContent(sectionId, 'links', newLinks)
+                        }}
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      const newLinks = (content.links || []).filter((_, i) => i !== index)
                       updateSectionContent(sectionId, 'links', newLinks)
                     }}
-                  />
-                  <Input
-                    placeholder="URL (ex: /terms)"
-                    value={link.href || ''}
-                    onChange={(e) => {
-                      const newLinks = [...(content.links || [])]
-                      newLinks[index] = { ...newLinks[index], href: e.target.value }
-                      updateSectionContent(sectionId, 'links', newLinks)
-                    }}
-                  />
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => {
-                    const newLinks = (content.links || []).filter((_, i) => i !== index)
-                    updateSectionContent(sectionId, 'links', newLinks)
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
               </div>
             ))}
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
-                const newLinks = [...(content.links || []), { label: '', href: '' }]
+                const newLinks = [...(content.links || []), { label: '', href: '', content: '' }]
                 updateSectionContent(sectionId, 'links', newLinks)
               }}
             >
@@ -360,44 +390,59 @@ export default function FooterEditor() {
           <div className="space-y-4">
             <Label>Réseaux sociaux</Label>
             {(content.links || []).map((link, index) => (
-              <div key={index} className="flex gap-2 items-end">
-                <div className="flex-1 space-y-2">
-                  <Input
-                    placeholder="Plateforme (facebook, twitter, etc.)"
-                    value={link.platform || ''}
-                    onChange={(e) => {
-                      const newLinks = [...(content.links || [])]
-                      newLinks[index] = { ...newLinks[index], platform: e.target.value }
+              <div key={index} className="space-y-3 p-4 border rounded-lg">
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      placeholder="Plateforme (facebook, twitter, etc.)"
+                      value={link.platform || ''}
+                      onChange={(e) => {
+                        const newLinks = [...(content.links || [])]
+                        newLinks[index] = { ...newLinks[index], platform: e.target.value }
+                        updateSectionContent(sectionId, 'links', newLinks)
+                      }}
+                    />
+                    <Input
+                      placeholder="URL"
+                      value={link.url || ''}
+                      onChange={(e) => {
+                        const newLinks = [...(content.links || [])]
+                        newLinks[index] = { ...newLinks[index], url: e.target.value }
+                        updateSectionContent(sectionId, 'links', newLinks)
+                      }}
+                    />
+                    <div className="space-y-1">
+                      <Label className="text-sm">Contenu / Description (optionnel)</Label>
+                      <Textarea
+                        placeholder="Description ou contenu du lien..."
+                        value={link.content || ''}
+                        onChange={(e) => {
+                          const newLinks = [...(content.links || [])]
+                          newLinks[index] = { ...newLinks[index], content: e.target.value }
+                          updateSectionContent(sectionId, 'links', newLinks)
+                        }}
+                        rows={3}
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      const newLinks = (content.links || []).filter((_, i) => i !== index)
                       updateSectionContent(sectionId, 'links', newLinks)
                     }}
-                  />
-                  <Input
-                    placeholder="URL"
-                    value={link.url || ''}
-                    onChange={(e) => {
-                      const newLinks = [...(content.links || [])]
-                      newLinks[index] = { ...newLinks[index], url: e.target.value }
-                      updateSectionContent(sectionId, 'links', newLinks)
-                    }}
-                  />
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => {
-                    const newLinks = (content.links || []).filter((_, i) => i !== index)
-                    updateSectionContent(sectionId, 'links', newLinks)
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
               </div>
             ))}
             <Button
               variant="outline"
               size="sm"
               onClick={() => {
-                const newLinks = [...(content.links || []), { platform: '', url: '' }]
+                const newLinks = [...(content.links || []), { platform: '', url: '', content: '' }]
                 updateSectionContent(sectionId, 'links', newLinks)
               }}
             >

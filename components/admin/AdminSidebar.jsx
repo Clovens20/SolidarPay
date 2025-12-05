@@ -80,7 +80,7 @@ const menuItems = [
   }
 ]
 
-export default function AdminSidebar({ pathname, kycPending }) {
+export default function AdminSidebar({ pathname, kycPending, onNavigate }) {
   const isActive = (href) => {
     if (href === '/admin') {
       return pathname === '/admin'
@@ -88,40 +88,45 @@ export default function AdminSidebar({ pathname, kycPending }) {
     return pathname?.startsWith(href)
   }
 
-  return (
-    <aside className="fixed left-0 top-16 bottom-0 w-64 bg-white border-r border-solidarpay-border overflow-y-auto">
-      <nav className="p-4 space-y-1">
-        {menuItems.map((item) => {
-          const Icon = item.icon
-          const active = isActive(item.href)
-          const badgeCount = item.badge === 'kycPending' ? kycPending : null
+  const handleClick = () => {
+    if (onNavigate) {
+      onNavigate()
+    }
+  }
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
-                active
-                  ? 'bg-solidarpay-primary text-white'
-                  : 'text-solidarpay-text hover:bg-solidarpay-bg'
-              )}
-            >
-              <Icon className={cn('w-5 h-5', active ? 'text-white' : 'text-solidarpay-primary')} />
-              <span className="flex-1 font-medium">{item.title}</span>
-              {badgeCount !== null && badgeCount > 0 && (
-                <Badge 
-                  variant={active ? 'secondary' : 'destructive'} 
-                  className="ml-auto"
-                >
-                  {badgeCount}
-                </Badge>
-              )}
-            </Link>
-          )
-        })}
-      </nav>
-    </aside>
+  return (
+    <nav className="p-4 space-y-1 h-full">
+      {menuItems.map((item) => {
+        const Icon = item.icon
+        const active = isActive(item.href)
+        const badgeCount = item.badge === 'kycPending' ? kycPending : null
+
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={handleClick}
+            className={cn(
+              'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
+              active
+                ? 'bg-solidarpay-primary text-white'
+                : 'text-solidarpay-text hover:bg-solidarpay-bg'
+            )}
+          >
+            <Icon className={cn('w-5 h-5', active ? 'text-white' : 'text-solidarpay-primary')} />
+            <span className="flex-1 font-medium">{item.title}</span>
+            {badgeCount !== null && badgeCount > 0 && (
+              <Badge 
+                variant={active ? 'secondary' : 'destructive'} 
+                className="ml-auto"
+              >
+                {badgeCount}
+              </Badge>
+            )}
+          </Link>
+        )
+      })}
+    </nav>
   )
 }
 

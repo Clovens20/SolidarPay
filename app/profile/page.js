@@ -19,10 +19,12 @@ import {
   Calendar,
   CheckCircle,
   Clock,
-  AlertCircle
+  AlertCircle,
+  CreditCard
 } from 'lucide-react'
 import UploadKYC from '@/components/kyc/UploadKYC'
 import KYCStatus from '@/components/kyc/KYCStatus'
+import PaymentMethodsTab from '@/components/profile/PaymentMethodsTab'
 import { useToast } from '@/hooks/use-toast'
 
 export default function ProfilePage() {
@@ -188,6 +190,10 @@ export default function ProfilePage() {
             <TabsTrigger value="kyc">
               <ShieldCheck className="w-4 h-4 mr-2" />
               Vérification d'identité
+            </TabsTrigger>
+            <TabsTrigger value="payment">
+              <CreditCard className="w-4 h-4 mr-2" />
+              Méthodes de paiement
             </TabsTrigger>
           </TabsList>
 
@@ -404,6 +410,11 @@ export default function ProfilePage() {
                 </CardContent>
               </Card>
             )}
+          </TabsContent>
+
+          {/* Tab Méthodes de paiement */}
+          <TabsContent value="payment" className="space-y-6">
+            {user && <PaymentMethodsTab user={user} />}
           </TabsContent>
         </Tabs>
       </div>

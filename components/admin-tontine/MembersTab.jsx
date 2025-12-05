@@ -41,30 +41,51 @@ import { useToast } from '@/hooks/use-toast'
 import AddMemberModal from './AddMemberModal'
 import KYCDocumentModal from './KYCDocumentModal'
 
-export default function MembersTab({ tontineId, tontineName }) {
-  const [selectedCountry, setSelectedCountry] = useState('')
+export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
+  const [selectedCountry, setSelectedCountry] = useState('all') // 'all' pour permettre tontines inter-pays
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [members, setMembers] = useState([])
   const [countries, setCountries] = useState([])
+  const [loadingCountries, setLoadingCountries] = useState(true)
   const [loading, setLoading] = useState(false)
   const [searching, setSearching] = useState(false)
   const [addMemberModal, setAddMemberModal] = useState(null)
   const [kycModal, setKycModal] = useState(null)
   const [removeMemberId, setRemoveMemberId] = useState(null)
   const [removeMemberInfo, setRemoveMemberInfo] = useState(null)
+  const [hasActiveCycles, setHasActiveCycles] = useState(false)
   const { toast } = useToast()
 
   useEffect(() => {
     loadCountries()
     loadMembers()
+    checkActiveCycles()
   }, [tontineId])
+
+  const checkActiveCycles = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('cycles')
+        .select('id')
+        .eq('tontineId', tontineId)
+        .eq('status', 'active')
+        .limit(1)
+
+      if (error) throw error
+      setHasActiveCycles((data && data.length > 0) || false)
+    } catch (error) {
+      console.error('Error checking active cycles:', error)
+      setHasActiveCycles(false)
+    }
+  }
 
   const loadCountries = async () => {
     try {
+      setLoadingCountries(true)
       const { data, error } = await supabase
         .from('payment_countries')
-        .select('*')
+        .select('code, name, enabled')
         .eq('enabled', true)
         .order('name', { ascending: true })
 
@@ -75,12 +96,15 @@ export default function MembersTab({ tontineId, tontineName }) {
           description: 'Impossible de charger les pays. Vérifiez que la table payment_countries existe.',
           variant: 'destructive'
         })
+        setCountries([])
         return
       }
       
+      console.log('Countries loaded:', data) // Debug
       setCountries(data || [])
       
       if (!data || data.length === 0) {
+        console.warn('No countries found in database')
         toast({
           title: 'Aucun pays disponible',
           description: 'Aucun pays n\'a été configuré. Contactez le super admin.',
@@ -94,6 +118,9 @@ export default function MembersTab({ tontineId, tontineName }) {
         description: 'Erreur lors du chargement des pays: ' + error.message,
         variant: 'destructive'
       })
+      setCountries([])
+    } finally {
+      setLoadingCountries(false)
     }
   }
 
@@ -149,15 +176,6 @@ export default function MembersTab({ tontineId, tontineName }) {
   }
 
   const handleSearch = async () => {
-    if (!selectedCountry) {
-      toast({
-        title: 'Pays requis',
-        description: 'Veuillez sélectionner un pays avant de rechercher',
-        variant: 'destructive'
-      })
-      return
-    }
-
     if (!searchTerm.trim()) {
       toast({
         title: 'Recherche requise',
@@ -177,9 +195,8 @@ export default function MembersTab({ tontineId, tontineName }) {
         .or(`fullName.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`)
         .eq('role', 'member')
 
-      // Filter by country if users table has country field
-      // Note: You may need to add country field to users table
-      if (selectedCountry) {
+      // Filter by country if selected (optionnel pour permettre tontines inter-pays)
+      if (selectedCountry && selectedCountry !== 'all') {
         query = query.eq('country', selectedCountry)
       }
 
@@ -278,6 +295,37 @@ export default function MembersTab({ tontineId, tontineName }) {
   const handleRemoveMember = async () => {
     if (!removeMemberId || !removeMemberInfo) return
 
+    // Vérifier si la tontine a des cycles actifs
+    if (hasActiveCycles) {
+      toast({
+        title: 'Action impossible',
+        description: 'Vous ne pouvez pas retirer un membre pendant qu\'un cycle est actif. Attendez la fin du cycle ou annulez-le d\'abord.',
+        variant: 'destructive'
+      })
+      setRemoveMemberId(null)
+      setRemoveMemberInfo(null)
+      return
+    }
+
+    // Permettre la suppression si :
+    // 1. La tontine est terminée (completed)
+    // 2. La tontine est suspendue (suspended)
+    // 3. La tontine n'a pas de cycles actifs (peut être avant le recommencement)
+    const canRemove = tontineStatus === 'completed' || 
+                     tontineStatus === 'suspended' || 
+                     !hasActiveCycles
+
+    if (!canRemove) {
+      toast({
+        title: 'Action impossible',
+        description: 'Vous ne pouvez retirer un membre que si la tontine est terminée, suspendue, ou n\'a pas de cycles actifs (avant le recommencement).',
+        variant: 'destructive'
+      })
+      setRemoveMemberId(null)
+      setRemoveMemberInfo(null)
+      return
+    }
+
     try {
       // Delete the member from tontine
       const { error: deleteError } = await supabase
@@ -355,11 +403,8 @@ export default function MembersTab({ tontineId, tontineName }) {
 
   const getCountryFlag = (countryCode) => {
     const flags = {
-      'CA': '🇨🇦',
-      'FR': '🇫🇷',
-      'BE': '🇧🇪',
-      'CH': '🇨🇭',
-      'US': '🇺🇸'
+      'CA': '🇨🇦', 'US': '🇺🇸', 'FR': '🇫🇷', 'BE': '🇧🇪', 'CH': '🇨🇭',
+      'MX': '🇲🇽', 'CL': '🇨🇱', 'HT': '🇭🇹', 'SN': '🇸🇳', 'CM': '🇨🇲'
     }
     return flags[countryCode] || '🌍'
   }
@@ -371,39 +416,69 @@ export default function MembersTab({ tontineId, tontineName }) {
         <CardHeader>
           <CardTitle>Rechercher des membres</CardTitle>
           <CardDescription>
-            Recherchez des membres inscrits pour les ajouter à votre tontine
+            Recherchez des membres inscrits pour les ajouter à votre tontine. Vous pouvez créer des tontines inter-pays avec des membres de différents pays.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Step 1: Country Selection */}
+          {/* Step 1: Country Selection avec boutons séparés */}
           <div className="space-y-2">
-            <Label htmlFor="country">Étape 1: Sélectionner le pays</Label>
-            <Select value={selectedCountry || undefined} onValueChange={setSelectedCountry}>
-              <SelectTrigger id="country">
-                <SelectValue placeholder="Sélectionnez le pays de votre tontine" />
-              </SelectTrigger>
-              <SelectContent>
-                {countries.length === 0 ? (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">
-                    Aucun pays disponible
+            <Label>Filtrer par pays (optionnel)</Label>
+            <div className="space-y-3">
+              {/* Boutons par pays */}
+              <div className="flex flex-wrap gap-2">
+                {loadingCountries ? (
+                  <div className="text-sm text-solidarpay-text/50 italic flex items-center gap-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-solidarpay-primary"></div>
+                    Chargement des pays...
                   </div>
-                ) : (
+                ) : countries.length > 0 ? (
                   countries.map((country) => (
-                    <SelectItem key={country.code || country.id} value={country.code}>
+                    <Button
+                      key={country.code || country.id}
+                      variant={selectedCountry === country.code ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSelectedCountry(country.code)}
+                      className={
+                        selectedCountry === country.code
+                          ? "bg-solidarpay-primary hover:bg-solidarpay-secondary"
+                          : ""
+                      }
+                    >
                       {getCountryFlag(country.code)} {country.name}
-                    </SelectItem>
+                    </Button>
                   ))
+                ) : (
+                  <div className="text-sm text-solidarpay-text/50 italic">
+                    Aucun pays disponible. Contactez le super admin.
+                  </div>
                 )}
-              </SelectContent>
-            </Select>
+              </div>
+              {/* Bouton "Tous les pays" à la fin */}
+              <div className="flex justify-end">
+                <Button
+                  variant={selectedCountry === 'all' || !selectedCountry ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSelectedCountry('all')}
+                  className={
+                    selectedCountry === 'all' || !selectedCountry
+                      ? "bg-solidarpay-primary hover:bg-solidarpay-secondary"
+                      : ""
+                  }
+                >
+                  🌍 Tous les pays
+                </Button>
+              </div>
+            </div>
             <p className="text-xs text-solidarpay-text/70">
-              Seuls les membres de ce pays pourront être ajoutés
+              {selectedCountry === 'all' || !selectedCountry
+                ? 'Vous pouvez créer une tontine avec des membres de différents pays'
+                : `Filtrage actif : ${countries.find(c => c.code === selectedCountry)?.name || selectedCountry}`}
             </p>
           </div>
 
           {/* Step 2: Search */}
           <div className="space-y-2">
-            <Label htmlFor="search">Étape 2: Rechercher</Label>
+            <Label htmlFor="search">Rechercher des membres</Label>
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-solidarpay-text/50 w-4 h-4" />
@@ -414,12 +489,11 @@ export default function MembersTab({ tontineId, tontineName }) {
                   onChange={(e) => setSearchTerm(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
                   className="pl-10"
-                  disabled={!selectedCountry}
                 />
               </div>
               <Button
                 onClick={handleSearch}
-                disabled={!selectedCountry || !searchTerm.trim() || searching}
+                disabled={!searchTerm.trim() || searching}
                 className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
               >
                 {searching ? 'Recherche...' : 'Rechercher'}
@@ -585,13 +659,40 @@ export default function MembersTab({ tontineId, tontineName }) {
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {
+                                // Vérifier si on peut retirer le membre
+                                const canRemove = tontineStatus === 'completed' || 
+                                                 tontineStatus === 'suspended' || 
+                                                 !hasActiveCycles
+
+                                if (!canRemove) {
+                                  toast({
+                                    title: 'Action impossible',
+                                    description: 'Vous ne pouvez retirer un membre que si la tontine est terminée, suspendue, ou n\'a pas de cycles actifs (avant le recommencement).',
+                                    variant: 'destructive'
+                                  })
+                                  return
+                                }
+
+                                if (hasActiveCycles) {
+                                  toast({
+                                    title: 'Action impossible',
+                                    description: 'Vous ne pouvez pas retirer un membre pendant qu\'un cycle est actif. Attendez la fin du cycle.',
+                                    variant: 'destructive'
+                                  })
+                                  return
+                                }
                                 setRemoveMemberId(member.id)
                                 setRemoveMemberInfo(member)
                               }}
-                              className="text-red-600"
+                              className={hasActiveCycles ? "text-gray-400 cursor-not-allowed" : "text-red-600"}
+                              disabled={hasActiveCycles}
                             >
                               <UserMinus className="w-4 h-4 mr-2" />
-                              Retirer de la tontine
+                              {hasActiveCycles 
+                                ? 'Retirer (cycle actif)' 
+                                : tontineStatus === 'completed' 
+                                  ? 'Retirer (tontine terminée)' 
+                                  : 'Retirer de la tontine'}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -638,7 +739,18 @@ export default function MembersTab({ tontineId, tontineName }) {
                 <>
                   Êtes-vous sûr de vouloir retirer <strong>{removeMemberInfo.user.fullName}</strong> de la tontine <strong>{tontineName}</strong> ?
                   <br /><br />
-                  Cette action est <strong>irréversible</strong>. Le membre perdra l'accès à cette tontine et ne pourra plus participer aux cycles.
+                  {hasActiveCycles ? (
+                    <>
+                      <strong className="text-red-600">⚠️ Attention :</strong> Cette tontine a des cycles actifs. 
+                      Vous ne pouvez retirer un membre que si la tontine est terminée ou n'a pas de cycles actifs.
+                    </>
+                  ) : (
+                    <>
+                      Cette action est <strong>irréversible</strong>. Le membre perdra l'accès à cette tontine et ne pourra plus participer aux cycles.
+                      <br /><br />
+                      L'ordre de rotation des membres restants sera automatiquement réorganisé.
+                    </>
+                  )}
                 </>
               ) : (
                 'Êtes-vous sûr de vouloir retirer ce membre de la tontine ? Cette action est irréversible.'
@@ -655,9 +767,13 @@ export default function MembersTab({ tontineId, tontineName }) {
             >
               Annuler
             </Button>
-            <Button variant="destructive" onClick={handleRemoveMember}>
+            <Button 
+              variant="destructive" 
+              onClick={handleRemoveMember}
+              disabled={hasActiveCycles}
+            >
               <UserMinus className="w-4 h-4 mr-2" />
-              Confirmer la suppression
+              {hasActiveCycles ? 'Cycle actif - Impossible' : 'Confirmer la suppression'}
             </Button>
           </DialogFooter>
         </DialogContent>

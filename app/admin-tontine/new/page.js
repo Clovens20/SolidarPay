@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,17 +16,65 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { ArrowLeft, Save } from 'lucide-react'
+import { getCurrencyByCountry, getCurrencyInfo, formatCurrency } from '@/lib/currency-utils'
 
 export default function NewTontinePage() {
   const router = useRouter()
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
+  const [adminCountry, setAdminCountry] = useState(null)
+  const [currency, setCurrency] = useState('CAD')
+  const [loadingAdmin, setLoadingAdmin] = useState(true)
   const [formData, setFormData] = useState({
     name: '',
     contributionAmount: '',
     frequency: 'monthly',
-    kohoReceiverEmail: ''
+    kohoReceiverEmail: '',
+    paymentMode: 'direct' // 'direct' ou 'via_admin'
   })
+
+  useEffect(() => {
+    loadAdminInfo()
+  }, [])
+
+  const loadAdminInfo = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      // Charger les informations de l'admin
+      const { data: adminData, error } = await supabase
+        .from('users')
+        .select('country')
+        .eq('id', session.user.id)
+        .single()
+
+      if (error) throw error
+
+      if (adminData?.country) {
+        setAdminCountry(adminData.country)
+        
+        // Si l'admin a un pays dans payment_countries, récupérer la devise depuis là
+        const { data: countryData } = await supabase
+          .from('payment_countries')
+          .select('currency')
+          .eq('code', adminData.country)
+          .single()
+
+        if (countryData?.currency) {
+          setCurrency(countryData.currency)
+        } else {
+          // Sinon, utiliser le mapping par défaut
+          const defaultCurrency = getCurrencyByCountry(adminData.country)
+          setCurrency(defaultCurrency)
+        }
+      }
+    } catch (error) {
+      console.error('Error loading admin info:', error)
+    } finally {
+      setLoadingAdmin(false)
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -44,6 +92,8 @@ export default function NewTontinePage() {
           frequency: formData.frequency,
           adminId: session.user.id,
           kohoReceiverEmail: formData.kohoReceiverEmail,
+          paymentMode: formData.paymentMode,
+          currency: currency, // Devise automatiquement configurée selon le pays de l'admin
           status: 'active'
         }])
         .select()
@@ -104,16 +154,36 @@ export default function NewTontinePage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="amount">Montant de cotisation *</Label>
-                <Input
-                  id="amount"
-                  type="number"
-                  step="0.01"
-                  placeholder="100.00"
-                  value={formData.contributionAmount}
-                  onChange={(e) => setFormData({ ...formData, contributionAmount: e.target.value })}
-                  required
-                />
+                <Label htmlFor="amount">
+                  Montant de cotisation * 
+                  {!loadingAdmin && currency && (
+                    <span className="ml-2 text-sm font-normal text-solidarpay-text/70">
+                      ({getCurrencyInfo(currency).code})
+                    </span>
+                  )}
+                </Label>
+                <div className="relative">
+                  {!loadingAdmin && currency && (
+                    <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-solidarpay-text/70">
+                      {getCurrencyInfo(currency).symbol}
+                    </span>
+                  )}
+                  <Input
+                    id="amount"
+                    type="number"
+                    step="0.01"
+                    placeholder="100.00"
+                    value={formData.contributionAmount}
+                    onChange={(e) => setFormData({ ...formData, contributionAmount: e.target.value })}
+                    className={!loadingAdmin && currency ? "pl-8" : ""}
+                    required
+                  />
+                </div>
+                {!loadingAdmin && adminCountry && (
+                  <p className="text-xs text-solidarpay-text/70">
+                    Devise automatique selon votre pays ({adminCountry}): {getCurrencyInfo(currency).name}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -132,6 +202,31 @@ export default function NewTontinePage() {
             </div>
 
             <div className="space-y-2">
+              <Label htmlFor="paymentMode">Mode de paiement *</Label>
+              <Select 
+                value={formData.paymentMode} 
+                onValueChange={(value) => setFormData({ ...formData, paymentMode: value })}
+              >
+                <SelectTrigger id="paymentMode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct">
+                    Paiement direct - Les membres paient directement le bénéficiaire
+                  </SelectItem>
+                  <SelectItem value="via_admin">
+                    Paiement via admin - Les membres paient l'admin, qui paie ensuite le bénéficiaire
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-solidarpay-text/70">
+                {formData.paymentMode === 'direct' 
+                  ? 'Les membres paieront directement la personne qui recevra la tontine'
+                  : 'Les membres vous paieront, et vous pourrez payer le bénéficiaire une fois que tous ont payé'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="email">Email KOHO (récepteur) *</Label>
               <Input
                 id="email"
@@ -142,7 +237,9 @@ export default function NewTontinePage() {
                 required
               />
               <p className="text-xs text-solidarpay-text/70">
-                Email KOHO qui recevra les paiements Interac
+                {formData.paymentMode === 'direct' 
+                  ? 'Email KOHO du bénéficiaire qui recevra les paiements'
+                  : 'Votre email KOHO pour recevoir les paiements des membres'}
               </p>
             </div>
 

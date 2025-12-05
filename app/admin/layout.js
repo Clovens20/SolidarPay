@@ -5,8 +5,10 @@ import { useRouter, usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import AdminHeader from '@/components/admin/AdminHeader'
 import AdminSidebar from '@/components/admin/AdminSidebar'
+import { Sheet, SheetContent } from '@/components/ui/sheet'
 
 export default function AdminLayout({ children }) {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
   const [kycPending, setKycPending] = useState(0)
@@ -143,10 +145,26 @@ export default function AdminLayout({ children }) {
 
   return (
     <div className="min-h-screen bg-solidarpay-bg">
-      <AdminHeader user={user} kycPending={kycPending} />
+      <AdminHeader user={user} kycPending={kycPending} onMenuClick={() => setMobileMenuOpen(true)} />
       <div className="flex pt-16">
-        <AdminSidebar pathname={pathname} kycPending={kycPending} />
-        <main className="flex-1 p-6 ml-64">
+        {/* Desktop Sidebar */}
+        <aside className="hidden md:block fixed left-0 top-16 bottom-0 w-64 bg-white border-r border-solidarpay-border overflow-y-auto z-40">
+          <AdminSidebar pathname={pathname} kycPending={kycPending} onNavigate={() => {}} />
+        </aside>
+
+        {/* Mobile Sidebar */}
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetContent side="left" className="w-64 p-0">
+            <AdminSidebar 
+              pathname={pathname} 
+              kycPending={kycPending}
+              onNavigate={() => setMobileMenuOpen(false)} 
+            />
+          </SheetContent>
+        </Sheet>
+
+        {/* Main Content */}
+        <main className="flex-1 w-full md:ml-64 p-4 md:p-6">
           {children}
         </main>
       </div>

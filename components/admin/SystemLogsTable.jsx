@@ -153,7 +153,7 @@ export default function SystemLogsTable({ logs, loading, eventCategories }) {
       {/* Details Modal */}
       {selectedLog && (
         <Dialog open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-[95vw] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Détails de l'événement</DialogTitle>
               <DialogDescription>
@@ -161,10 +161,10 @@ export default function SystemLogsTable({ logs, loading, eventCategories }) {
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm font-medium text-solidarpay-text/70">Horodatage</p>
-                  <p className="font-mono text-sm">{formatDate(selectedLog.createdAt)}</p>
+                  <p className="font-mono text-xs sm:text-sm">{formatDate(selectedLog.createdAt)}</p>
                 </div>
                 <div>
                   <p className="text-sm font-medium text-solidarpay-text/70">Niveau</p>

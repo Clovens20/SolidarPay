@@ -8,9 +8,11 @@ import {
   LogOut, 
   User, 
   ShieldCheck,
-  Bell 
+  Bell,
+  Menu
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useIsMobile } from '@/hooks/use-mobile'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,9 +23,10 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
 
-export default function AdminHeader({ user, kycPending }) {
+export default function AdminHeader({ user, kycPending, onMenuClick }) {
   const router = useRouter()
   const [notifications, setNotifications] = useState([])
+  const isMobile = useIsMobile()
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -32,9 +35,21 @@ export default function AdminHeader({ user, kycPending }) {
 
   return (
     <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-solidarpay-border z-50">
-      <div className="flex items-center justify-between h-full px-6">
+      <div className="flex items-center justify-between h-full px-4 md:px-6">
         {/* Logo and Title */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4">
+          {/* Mobile Menu Button */}
+          {isMobile && onMenuClick && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="mr-2"
+              onClick={onMenuClick}
+            >
+              <Menu className="h-5 w-5" />
+            </Button>
+          )}
+          
           <div className="flex items-center gap-2">
             <img 
               src="/logo.png.jpg" 
@@ -48,22 +63,23 @@ export default function AdminHeader({ user, kycPending }) {
             <div className="w-8 h-8 bg-gradient-to-br from-solidarpay-primary to-solidarpay-secondary rounded-lg flex items-center justify-center hidden">
               <span className="text-white font-bold text-lg">S</span>
             </div>
-            <span className="text-xl font-bold text-solidarpay-text">SolidarPay</span>
+            <span className="text-lg md:text-xl font-bold text-solidarpay-text">SolidarPay</span>
           </div>
-          <div className="h-6 w-px bg-solidarpay-border" />
-          <span className="text-sm text-solidarpay-text/70">Super Admin - Gestion Technique</span>
+          <div className="hidden md:block h-6 w-px bg-solidarpay-border" />
+          <span className="hidden lg:block text-sm text-solidarpay-text/70">Super Admin - Gestion Technique</span>
         </div>
 
         {/* Right side */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2 md:gap-4">
           {/* KYC Badge */}
           {kycPending > 0 && (
             <Badge 
               variant="destructive" 
-              className="flex items-center gap-1 px-3 py-1"
+              className="hidden sm:flex items-center gap-1 px-2 md:px-3 py-1 text-xs md:text-sm"
             >
               <ShieldCheck className="w-4 h-4" />
-              {kycPending} vérifications KYC en attente
+              <span className="hidden md:inline">{kycPending} vérifications KYC en attente</span>
+              <span className="md:hidden">{kycPending}</span>
             </Badge>
           )}
 
@@ -71,7 +87,7 @@ export default function AdminHeader({ user, kycPending }) {
           <Button
             variant="outline"
             onClick={handleLogout}
-            className="border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 font-medium"
+            className="hidden md:flex border-red-500 text-red-600 hover:bg-red-50 hover:text-red-700 font-medium"
           >
             <LogOut className="w-4 h-4 mr-2" />
             Déconnexion
@@ -111,7 +127,7 @@ export default function AdminHeader({ user, kycPending }) {
                 <div className="w-8 h-8 rounded-full bg-solidarpay-primary flex items-center justify-center text-white font-semibold">
                   {user?.fullName?.charAt(0)?.toUpperCase() || 'A'}
                 </div>
-                <span className="text-sm font-medium text-solidarpay-text">
+                <span className="hidden sm:block text-sm font-medium text-solidarpay-text">
                   {user?.fullName || 'Admin'}
                 </span>
               </Button>
@@ -128,11 +144,15 @@ export default function AdminHeader({ user, kycPending }) {
                 <Settings className="w-4 h-4 mr-2" />
                 Paramètres
               </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600 focus:bg-red-50">
-                <LogOut className="w-4 h-4 mr-2" />
-                Déconnexion
-              </DropdownMenuItem>
+              {isMobile && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600 focus:bg-red-50">
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Déconnexion
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

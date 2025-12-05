@@ -62,24 +62,134 @@ export async function GET(request) {
       return NextResponse.json(data || [])
     }
 
-    // Get all tontines
+    // Get all tontines (filtrées selon le rôle de l'utilisateur)
     if (path === 'tontines') {
-      const { data, error } = await supabase
-        .from('tontines')
-        .select(`
-          *,
-          admin:adminId (id, fullName, email)
-        `)
-        .order('createdAt', { ascending: false })
+      // Récupérer l'utilisateur connecté depuis le header ou la session
+      const authHeader = request.headers.get('authorization')
+      let userId = null
+      let userRole = null
 
-      if (error) throw error
-      return NextResponse.json(data || [])
+      // Essayer de récupérer l'utilisateur depuis le header Authorization
+      if (authHeader) {
+        try {
+          const token = authHeader.replace('Bearer ', '')
+          const { data: { user }, error: userError } = await supabase.auth.getUser(token)
+          
+          if (!userError && user) {
+            const { data: userData } = await supabase
+              .from('users')
+              .select('id, role')
+              .eq('id', user.id)
+              .single()
+            
+            if (userData) {
+              userId = userData.id
+              userRole = userData.role
+            }
+          }
+        } catch (err) {
+          // Ignorer les erreurs d'authentification pour cette route
+        }
+      }
+
+      // Si pas d'utilisateur connecté, retourner vide
+      if (!userId) {
+        return NextResponse.json([])
+      }
+
+      let tontinesData = []
+
+      // Si l'utilisateur est admin, retourner les tontines qu'il administre
+      if (userRole === 'admin') {
+        const { data, error } = await supabase
+          .from('tontines')
+          .select(`
+            *,
+            admin:adminId (id, fullName, email)
+          `)
+          .eq('adminId', userId)
+          .order('createdAt', { ascending: false })
+
+        if (error) throw error
+        tontinesData = data || []
+      } 
+      // Si l'utilisateur est membre, retourner uniquement les tontines où il est membre
+      else if (userRole === 'member') {
+        // Récupérer les IDs des tontines où l'utilisateur est membre
+        const { data: memberTontines, error: memberError } = await supabase
+          .from('tontine_members')
+          .select('tontineId')
+          .eq('userId', userId)
+
+        if (memberError) throw memberError
+
+        const tontineIds = (memberTontines || []).map(m => m.tontineId)
+
+        if (tontineIds.length > 0) {
+          const { data, error } = await supabase
+            .from('tontines')
+            .select(`
+              *,
+              admin:adminId (id, fullName, email)
+            `)
+            .in('id', tontineIds)
+            .order('createdAt', { ascending: false })
+
+          if (error) throw error
+          tontinesData = data || []
+        }
+      }
+      // Pour les autres rôles (super_admin), retourner toutes les tontines
+      else {
+        const { data, error } = await supabase
+          .from('tontines')
+          .select(`
+            *,
+            admin:adminId (id, fullName, email)
+          `)
+          .order('createdAt', { ascending: false })
+
+        if (error) throw error
+        tontinesData = data || []
+      }
+
+      return NextResponse.json(tontinesData)
     }
 
-    // Get tontine by ID with members
-    if (path.startsWith('tontines/')) {
-      const tontineId = path.split('/')[1]
+    // Get tontine by ID with members (avec vérification d'accès)
+    // Vérifier que c'est bien "tontines/{id}" et pas "tontines/members/..." ou autre
+    const tontinesPathMatch = path.match(/^tontines\/([^\/]+)$/)
+    if (tontinesPathMatch) {
+      const tontineId = tontinesPathMatch[1]
       
+      // Récupérer l'utilisateur connecté
+      const authHeader = request.headers.get('authorization')
+      let userId = null
+      let userRole = null
+
+      if (authHeader) {
+        try {
+          const token = authHeader.replace('Bearer ', '')
+          const { data: { user }, error: userError } = await supabase.auth.getUser(token)
+          
+          if (!userError && user) {
+            const { data: userData } = await supabase
+              .from('users')
+              .select('id, role')
+              .eq('id', user.id)
+              .single()
+            
+            if (userData) {
+              userId = userData.id
+              userRole = userData.role
+            }
+          }
+        } catch (err) {
+          // Ignorer les erreurs d'authentification
+        }
+      }
+
+      // Récupérer la tontine
       const { data: tontine, error: tontineError } = await supabase
         .from('tontines')
         .select(`
@@ -90,6 +200,32 @@ export async function GET(request) {
         .single()
 
       if (tontineError) throw tontineError
+      if (!tontine) {
+        return NextResponse.json({ error: 'Tontine not found' }, { status: 404 })
+      }
+
+      // Vérifier l'accès selon le rôle
+      if (userId && userRole) {
+        if (userRole === 'member') {
+          // Vérifier que l'utilisateur est membre de cette tontine
+          const { data: membership, error: membershipError } = await supabase
+            .from('tontine_members')
+            .select('id')
+            .eq('tontineId', tontineId)
+            .eq('userId', userId)
+            .single()
+
+          if (membershipError || !membership) {
+            return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+          }
+        } else if (userRole === 'admin') {
+          // Vérifier que l'utilisateur est admin de cette tontine
+          if (tontine.adminId !== userId) {
+            return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+          }
+        }
+        // super_admin peut accéder à toutes les tontines
+      }
 
       // Get members
       const { data: members, error: membersError } = await supabase
@@ -174,11 +310,31 @@ export async function POST(request) {
 
     // Register new user
     if (path === 'auth/register') {
-      const { email, password, fullName, phone, role = 'member' } = body
+      const { email, password, fullName, phone, country, role = 'member' } = body
+
+      // Validation du pays (obligatoire)
+      if (!country) {
+        return NextResponse.json({ error: 'Le pays est obligatoire' }, { status: 400 })
+      }
 
       // Valider le rôle - seuls 'member' et 'admin' sont autorisés lors de l'inscription
       const validRoles = ['member', 'admin']
       const userRole = validRoles.includes(role) ? role : 'member'
+
+      // Vérifier que le pays existe et est activé
+      const { data: countryData, error: countryError } = await supabase
+        .from('payment_countries')
+        .select('code, enabled')
+        .eq('code', country)
+        .single()
+
+      if (countryError || !countryData) {
+        return NextResponse.json({ error: 'Pays invalide' }, { status: 400 })
+      }
+
+      if (!countryData.enabled) {
+        return NextResponse.json({ error: 'Ce pays n\'est pas disponible actuellement' }, { status: 400 })
+      }
 
       // Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
@@ -188,14 +344,15 @@ export async function POST(request) {
 
       if (authError) throw authError
 
-      // Create user record
+      // Create user record avec le pays
       const { data: userData, error: userError } = await supabase
         .from('users')
         .insert([{
           id: authData.user.id,
           email,
           fullName,
-          phone,
+          phone: phone || null,
+          country: country,
           role: userRole,
         }])
         .select()
@@ -245,7 +402,7 @@ export async function POST(request) {
 
     // Create tontine
     if (path === 'tontines') {
-      const { name, contributionAmount, frequency, adminId, kohoReceiverEmail, memberIds } = body
+      const { name, contributionAmount, frequency, adminId, kohoReceiverEmail, memberIds, currency, paymentMode } = body
 
       // Create tontine
       const { data: tontine, error: tontineError } = await supabase
@@ -256,6 +413,8 @@ export async function POST(request) {
           frequency,
           adminId,
           kohoReceiverEmail,
+          currency: currency || 'CAD', // Devise par défaut si non fournie
+          paymentMode: paymentMode || 'direct', // Mode de paiement par défaut
           status: 'active',
         }])
         .select()
