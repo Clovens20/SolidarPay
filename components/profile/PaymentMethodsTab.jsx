@@ -18,16 +18,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-
-const PAYMENT_METHOD_LABELS = {
-  interac: 'Interac e-Transfer',
-  credit_card: 'Carte de crédit',
-  bank_transfer: 'Virement bancaire',
-  paypal: 'PayPal',
-  zelle: 'Zelle',
-  cash_app: 'Cash App',
-  mobile_money: 'Mobile Money'
-}
+import {
+  PAYMENT_METHOD_LABELS,
+  paymentMethodUsesEmail,
+  paymentMethodUsesAccountOrRut,
+} from '@/lib/payment-methods'
 
 export default function PaymentMethodsTab({ user }) {
   const { toast } = useToast()
@@ -381,8 +376,7 @@ export default function PaymentMethodsTab({ user }) {
                 </div>
 
                 {/* Champs spécifiques selon la méthode */}
-                {(formData.paymentMethod === 'interac' || formData.paymentMethod === 'paypal' || 
-                  formData.paymentMethod === 'zelle' || formData.paymentMethod === 'cash_app') && (
+                {paymentMethodUsesEmail(formData.paymentMethod) && (
                   <div className="space-y-2">
                     <Label>Email *</Label>
                     <Input
@@ -395,23 +389,39 @@ export default function PaymentMethodsTab({ user }) {
                   </div>
                 )}
 
-                {(formData.paymentMethod === 'bank_transfer' || formData.paymentMethod === 'mobile_money') && (
+                {paymentMethodUsesAccountOrRut(formData.paymentMethod) && (
                   <>
                     <div className="space-y-2">
-                      <Label>Numéro de compte / Téléphone *</Label>
+                      <Label>
+                        {formData.paymentMethod === 'cuenta_rut_transferencia'
+                          ? 'RUT / Cuenta bancaria *'
+                          : 'Numéro de compte / Téléphone *'}
+                      </Label>
                       <Input
                         type="text"
-                        placeholder="Numéro de compte ou téléphone"
+                        placeholder={
+                          formData.paymentMethod === 'cuenta_rut_transferencia'
+                            ? 'RUT o número de cuenta para transferencia'
+                            : 'Numéro de compte ou téléphone'
+                        }
                         value={formData.accountNumber}
                         onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
                         required
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Nom de la banque</Label>
+                      <Label>
+                        {formData.paymentMethod === 'cuenta_rut_transferencia'
+                          ? 'Banco (optional)'
+                          : 'Nom de la banque'}
+                      </Label>
                       <Input
                         type="text"
-                        placeholder="Nom de la banque"
+                        placeholder={
+                          formData.paymentMethod === 'cuenta_rut_transferencia'
+                            ? 'Ej. Banco de Chile, BancoEstado…'
+                            : 'Nom de la banque'
+                        }
                         value={formData.bankName}
                         onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
                       />

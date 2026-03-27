@@ -4,10 +4,14 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { formatCurrency } from '@/lib/currency-utils'
-import { Users, DollarSign, Calendar, TrendingUp } from 'lucide-react'
+import ReceiverDetails from '@/components/tontine/ReceiverDetails'
+import { Users, DollarSign, Calendar, TrendingUp, Copy } from 'lucide-react'
+import { useToast } from '@/hooks/use-toast'
 
 export default function OverviewTab({ tontine }) {
+  const { toast } = useToast()
   const [stats, setStats] = useState({
     memberCount: 0,
     totalCollected: 0,
@@ -127,6 +131,33 @@ export default function OverviewTab({ tontine }) {
               <p className="text-sm text-solidarpay-text/70">Nom</p>
               <p className="font-medium">{tontine.name}</p>
             </div>
+            <div className="sm:col-span-2">
+              <p className="text-sm text-solidarpay-text/70">Code d’invitation (membres)</p>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <code className="text-sm font-mono bg-solidarpay-bg px-2 py-1 rounded border">
+                  {tontine.inviteCode || '—'}
+                </code>
+                {tontine.inviteCode ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(tontine.inviteCode)
+                      toast({ title: 'Copié', description: 'Code d’invitation copié dans le presse-papiers.' })
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copier
+                  </Button>
+                ) : null}
+              </div>
+              <p className="text-xs text-solidarpay-text/60 mt-1">
+                Les membres peuvent saisir ce code (ou l’identifiant de la tontine) pour demander à rejoindre — vous
+                validez dans l’onglet Membres.
+              </p>
+            </div>
             <div>
               <p className="text-sm text-solidarpay-text/70">Statut</p>
               <Badge variant={tontine.status === 'active' ? 'default' : 'secondary'}>
@@ -141,9 +172,9 @@ export default function OverviewTab({ tontine }) {
                  'Hebdomadaire'}
               </p>
             </div>
-            <div>
-              <p className="text-sm text-solidarpay-text/70">Email KOHO</p>
-              <p className="font-medium">{tontine.kohoReceiverEmail}</p>
+            <div className="sm:col-span-2">
+              <p className="text-sm text-solidarpay-text/70">Coordonnées de réception</p>
+              <ReceiverDetails raw={tontine.kohoReceiverEmail} />
             </div>
             <div>
               <p className="text-sm text-solidarpay-text/70">Créée le</p>

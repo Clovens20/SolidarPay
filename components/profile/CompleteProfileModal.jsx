@@ -16,16 +16,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Globe, CreditCard, AlertCircle, CheckCircle } from 'lucide-react'
-
-const PAYMENT_METHOD_LABELS = {
-  interac: 'Interac e-Transfer',
-  credit_card: 'Carte de crédit',
-  bank_transfer: 'Virement bancaire',
-  paypal: 'PayPal',
-  zelle: 'Zelle',
-  cash_app: 'Cash App',
-  mobile_money: 'Mobile Money'
-}
+import {
+  PAYMENT_METHOD_LABELS,
+  paymentMethodUsesEmail,
+  paymentMethodUsesAccountOrRut,
+} from '@/lib/payment-methods'
 
 const getCountryFlag = (code) => {
   const flags = {
@@ -133,8 +128,7 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
     }
 
     // Valider les champs requis selon la méthode
-    if ((selectedPaymentMethod === 'interac' || selectedPaymentMethod === 'paypal' || 
-         selectedPaymentMethod === 'zelle' || selectedPaymentMethod === 'cash_app') && !formData.email) {
+    if (paymentMethodUsesEmail(selectedPaymentMethod) && !formData.email) {
       toast({
         title: 'Erreur',
         description: 'Veuillez renseigner votre email pour cette méthode de paiement',
@@ -143,10 +137,10 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
       return
     }
 
-    if ((selectedPaymentMethod === 'bank_transfer' || selectedPaymentMethod === 'mobile_money') && !formData.accountNumber) {
+    if (paymentMethodUsesAccountOrRut(selectedPaymentMethod) && !formData.accountNumber) {
       toast({
         title: 'Erreur',
-        description: 'Veuillez renseigner votre numéro de compte ou téléphone',
+        description: 'Veuillez renseigner le RUT / compte ou le numéro demandé',
         variant: 'destructive',
       })
       return
@@ -227,9 +221,6 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
     }
   }
 
-  const needsCountry = !user?.country
-  const needsPaymentMethod = !selectedPaymentMethod || (selectedPaymentMethod && !formData.email && !formData.accountNumber)
-
   return (
     <Dialog open={open} onOpenChange={() => {}}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -306,8 +297,7 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
           {/* Champs spécifiques selon la méthode */}
           {selectedPaymentMethod && (
             <div className="space-y-4 border-t pt-4">
-              {(selectedPaymentMethod === 'interac' || selectedPaymentMethod === 'paypal' || 
-                selectedPaymentMethod === 'zelle' || selectedPaymentMethod === 'cash_app') && (
+              {paymentMethodUsesEmail(selectedPaymentMethod) && (
                 <div className="space-y-2">
                   <Label>Email *</Label>
                   <Input
@@ -320,23 +310,39 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
                 </div>
               )}
 
-              {(selectedPaymentMethod === 'bank_transfer' || selectedPaymentMethod === 'mobile_money') && (
+              {paymentMethodUsesAccountOrRut(selectedPaymentMethod) && (
                 <>
                   <div className="space-y-2">
-                    <Label>Numéro de compte / Téléphone *</Label>
+                    <Label>
+                      {selectedPaymentMethod === 'cuenta_rut_transferencia'
+                        ? 'RUT / Cuenta bancaria *'
+                        : 'Numéro de compte / Téléphone *'}
+                    </Label>
                     <Input
                       type="text"
-                      placeholder="Numéro de compte ou téléphone"
+                      placeholder={
+                        selectedPaymentMethod === 'cuenta_rut_transferencia'
+                          ? 'RUT o número de cuenta para transferencia'
+                          : 'Numéro de compte ou téléphone'
+                      }
                       value={formData.accountNumber}
                       onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
                       required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Nom de la banque</Label>
+                    <Label>
+                      {selectedPaymentMethod === 'cuenta_rut_transferencia'
+                        ? 'Banque (optionnel)'
+                        : 'Nom de la banque'}
+                    </Label>
                     <Input
                       type="text"
-                      placeholder="Nom de la banque (optionnel)"
+                      placeholder={
+                        selectedPaymentMethod === 'cuenta_rut_transferencia'
+                          ? 'Ej. Banco de Chile, BancoEstado…'
+                          : 'Nom de la banque (optionnel)'
+                      }
                       value={formData.bankName}
                       onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
                     />

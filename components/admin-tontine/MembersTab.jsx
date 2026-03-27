@@ -36,12 +36,27 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, CheckCircle, Clock, XCircle, MoreVertical, Eye, UserMinus, User, FileText } from 'lucide-react'
+import { Search, CheckCircle, Clock, XCircle, MoreVertical, Eye, UserMinus, User, FileText, Landmark } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import AddMemberModal from './AddMemberModal'
 import KYCDocumentModal from './KYCDocumentModal'
+import { getCurrencyInfo } from '@/lib/currency-utils'
+import {
+  receiverFieldModeForCountry,
+  serializeChileReceiver,
+  isDirectPerMemberStorage,
+  parseReceiverStorage,
+} from '@/lib/tontine-receiver'
 
-export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
+export default function MembersTab({
+  tontineId,
+  tontineName,
+  tontineStatus,
+  paymentMode,
+  currency,
+  kohoReceiverEmail,
+  adminId,
+}) {
   const [selectedCountry, setSelectedCountry] = useState('all') // 'all' pour permettre tontines inter-pays
   const [searchTerm, setSearchTerm] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -55,13 +70,40 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
   const [removeMemberId, setRemoveMemberId] = useState(null)
   const [removeMemberInfo, setRemoveMemberInfo] = useState(null)
   const [hasActiveCycles, setHasActiveCycles] = useState(false)
+  const [adminCountry, setAdminCountry] = useState(null)
+  const [receiverEditMember, setReceiverEditMember] = useState(null)
+  const [receiverForm, setReceiverForm] = useState({
+    clRut: '',
+    clBank: '',
+    clAccountType: '',
+    clAccountNumber: '',
+    emailOrId: '',
+  })
+  const [savingReceiver, setSavingReceiver] = useState(false)
+  const [joinRequests, setJoinRequests] = useState([])
+  const [joinRequestActionId, setJoinRequestActionId] = useState(null)
   const { toast } = useToast()
+
+  const showDirectPerMember =
+    paymentMode === 'direct' && isDirectPerMemberStorage(kohoReceiverEmail)
+  const receiverMode = receiverFieldModeForCountry(adminCountry)
+  const currencyCode = currency || 'CAD'
+  const currencyInfo = getCurrencyInfo(currencyCode)
 
   useEffect(() => {
     loadCountries()
     loadMembers()
     checkActiveCycles()
+    loadJoinRequests()
   }, [tontineId])
+
+  useEffect(() => {
+    if (!adminId) return
+    ;(async () => {
+      const { data } = await supabase.from('users').select('country').eq('id', adminId).maybeSingle()
+      setAdminCountry(data?.country || null)
+    })()
+  }, [adminId])
 
   const checkActiveCycles = async () => {
     try {
@@ -172,6 +214,102 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadJoinRequests = async () => {
+    try {
+      const { data: reqs, error } = await supabase
+        .from('tontine_join_requests')
+        .select('id, message, createdAt, userId')
+        .eq('tontineId', tontineId)
+        .eq('status', 'pending')
+        .order('createdAt', { ascending: true })
+
+      if (error) throw error
+      const uids = [...new Set((reqs || []).map((r) => r.userId))]
+      let byId = {}
+      if (uids.length) {
+        const { data: users } = await supabase
+          .from('users')
+          .select('id, fullName, email')
+          .in('id', uids)
+        byId = Object.fromEntries((users || []).map((u) => [u.id, u]))
+      }
+      setJoinRequests(
+        (reqs || []).map((r) => ({
+          ...r,
+          requester: byId[r.userId],
+        }))
+      )
+    } catch (e) {
+      console.error('Error loading join requests:', e)
+      setJoinRequests([])
+    }
+  }
+
+  const acceptJoinRequest = async (req) => {
+    setJoinRequestActionId(req.id)
+    try {
+      const { data: existingMembers } = await supabase
+        .from('tontine_members')
+        .select('rotationOrder')
+        .eq('tontineId', tontineId)
+        .order('rotationOrder', { ascending: false })
+        .limit(1)
+
+      const nextOrder =
+        existingMembers && existingMembers.length > 0 ? existingMembers[0].rotationOrder + 1 : 1
+
+      const { error: insErr } = await supabase.from('tontine_members').insert({
+        tontineId,
+        userId: req.userId,
+        rotationOrder: nextOrder,
+      })
+      if (insErr) throw insErr
+
+      const { error: updErr } = await supabase
+        .from('tontine_join_requests')
+        .update({ status: 'accepted', respondedAt: new Date().toISOString() })
+        .eq('id', req.id)
+      if (updErr) throw updErr
+
+      toast({
+        title: 'Demande acceptée',
+        description: 'Le membre a été ajouté à la tontine.',
+      })
+      loadJoinRequests()
+      loadMembers()
+    } catch (e) {
+      console.error(e)
+      toast({
+        title: 'Erreur',
+        description: e.message || 'Impossible d’accepter la demande',
+        variant: 'destructive',
+      })
+    } finally {
+      setJoinRequestActionId(null)
+    }
+  }
+
+  const rejectJoinRequest = async (req) => {
+    setJoinRequestActionId(req.id)
+    try {
+      const { error } = await supabase
+        .from('tontine_join_requests')
+        .update({ status: 'rejected', respondedAt: new Date().toISOString() })
+        .eq('id', req.id)
+      if (error) throw error
+      toast({ title: 'Demande refusée' })
+      loadJoinRequests()
+    } catch (e) {
+      toast({
+        title: 'Erreur',
+        description: e.message || 'Impossible de refuser la demande',
+        variant: 'destructive',
+      })
+    } finally {
+      setJoinRequestActionId(null)
     }
   }
 
@@ -409,8 +547,158 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
     return flags[countryCode] || '🌍'
   }
 
+  const openReceiverDialog = (member) => {
+    setReceiverEditMember(member)
+    const raw = member.receiverPaymentStorage || ''
+    const p = parseReceiverStorage(raw)
+    if (p.kind === 'cl_transferencia') {
+      setReceiverForm({
+        clRut: p.rut || '',
+        clBank: p.bank || '',
+        clAccountType: p.accountType || '',
+        clAccountNumber: p.accountNumber || '',
+        emailOrId: '',
+      })
+    } else if (p.kind === 'email') {
+      setReceiverForm({
+        clRut: '',
+        clBank: '',
+        clAccountType: '',
+        clAccountNumber: '',
+        emailOrId: p.email || '',
+      })
+    } else {
+      setReceiverForm({
+        clRut: '',
+        clBank: '',
+        clAccountType: '',
+        clAccountNumber: '',
+        emailOrId: p.kind === 'raw' ? String(raw) : '',
+      })
+    }
+  }
+
+  const saveReceiverPayment = async () => {
+    if (!receiverEditMember) return
+    setSavingReceiver(true)
+    try {
+      let storage = ''
+      if (receiverMode === 'cl_transferencia') {
+        const rut = receiverForm.clRut.trim()
+        const bank = receiverForm.clBank.trim()
+        const accountNumber = receiverForm.clAccountNumber.trim()
+        const accountType = receiverForm.clAccountType.trim()
+        if (!rut || !bank || !accountNumber) {
+          throw new Error('RUT, banque et numéro de compte sont requis')
+        }
+        storage = serializeChileReceiver({ rut, bank, accountType, accountNumber })
+      } else {
+        storage = receiverForm.emailOrId.trim()
+        if (!storage) {
+          throw new Error(
+            receiverMode === 'koho_interac'
+              ? 'L’email KOHO est requis'
+              : 'Les coordonnées de réception sont requises'
+          )
+        }
+      }
+      const { error } = await supabase
+        .from('tontine_members')
+        .update({ receiverPaymentStorage: storage })
+        .eq('id', receiverEditMember.id)
+      if (error) throw error
+      toast({
+        title: 'Coordonnées enregistrées',
+        description: `Réception pour ${receiverEditMember.user?.fullName || 'le membre'}`,
+      })
+      setReceiverEditMember(null)
+      loadMembers()
+    } catch (e) {
+      toast({
+        title: 'Erreur',
+        description: e.message || 'Enregistrement impossible',
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingReceiver(false)
+    }
+  }
+
+  const receiverStatusBadge = (member) => {
+    const p = parseReceiverStorage(member.receiverPaymentStorage)
+    if (p.kind !== 'empty') {
+      return (
+        <Badge variant="outline" className="bg-green-50 text-green-800 border-green-200">
+          Défini
+        </Badge>
+      )
+    }
+    return (
+      <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-200">
+        À compléter
+      </Badge>
+    )
+  }
+
   return (
     <div className="space-y-6">
+      {joinRequests.length > 0 && (
+        <Card className="border-amber-200 bg-amber-50/40">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <User className="w-5 h-5" />
+              Demandes pour rejoindre la tontine
+            </CardTitle>
+            <CardDescription>
+              Ces personnes ont demandé à participer. Acceptez pour les ajouter avec le prochain ordre de rotation,
+              ou refusez si la tontine est déjà complète.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {joinRequests.map((req) => (
+              <div
+                key={req.id}
+                className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 rounded-lg border bg-white"
+              >
+                <div>
+                  <p className="font-medium">
+                    {req.requester?.fullName || 'Utilisateur'}
+                    <span className="text-sm font-normal text-solidarpay-text/70 ml-2">
+                      {req.requester?.email}
+                    </span>
+                  </p>
+                  <p className="text-xs text-solidarpay-text/60 mt-1">
+                    Demandé le {new Date(req.createdAt).toLocaleString('fr-FR')}
+                  </p>
+                  {req.message ? (
+                    <p className="text-sm text-solidarpay-text/80 mt-2 italic">&laquo; {req.message} &raquo;</p>
+                  ) : null}
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                    disabled={joinRequestActionId !== null}
+                    onClick={() => rejectJoinRequest(req)}
+                  >
+                    {joinRequestActionId === req.id ? '…' : 'Refuser'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
+                    disabled={joinRequestActionId !== null}
+                    onClick={() => acceptJoinRequest(req)}
+                  >
+                    {joinRequestActionId === req.id ? '…' : 'Accepter'}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Search Section */}
       <Card>
         <CardHeader>
@@ -515,7 +803,7 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
               {searchResults.map((user) => {
                 const kycInfo = getKYCStatus(user.kyc)
                 const KYCIcon = kycInfo.icon
-                const canAdd = kycInfo.status === 'approved' && !user.isAlreadyMember
+                const canAdd = !user.isAlreadyMember
 
                 return (
                   <Card key={user.id} className="relative">
@@ -562,9 +850,7 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
                           </Button>
                         ) : (
                           <div className="text-xs text-solidarpay-text/70 text-center">
-                            {kycInfo.status === 'pending' && 'En cours de vérification'}
-                            {kycInfo.status === 'rejected' && 'Doit compléter sa vérification'}
-                            {kycInfo.status === 'none' && 'Doit compléter sa vérification'}
+                            Indisponible
                           </div>
                         )}
                       </div>
@@ -574,6 +860,22 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
               })}
             </div>
           </CardContent>
+        </Card>
+      )}
+
+      {showDirectPerMember && (
+        <Card className="border-cyan-200 bg-cyan-50/50">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Landmark className="w-5 h-5" />
+              Coordonnées par membre (paiement direct)
+            </CardTitle>
+            <CardDescription>
+              Chaque participant doit avoir ses propres coordonnées (banque / email) : ce sont celles affichées aux
+              autres membres lorsqu’il ou elle est <strong>bénéficiaire du cycle</strong>. Devise de la tontine :{' '}
+              {currencyInfo.code}.
+            </CardDescription>
+          </CardHeader>
         </Card>
       )}
 
@@ -598,6 +900,7 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
                 <TableRow>
                   <TableHead>Membre</TableHead>
                   <TableHead>Email</TableHead>
+                  {showDirectPerMember ? <TableHead>Réception cotisation</TableHead> : null}
                   <TableHead>Téléphone</TableHead>
                   <TableHead>Statut KYC</TableHead>
                   <TableHead>Document</TableHead>
@@ -621,6 +924,9 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
                         </div>
                       </TableCell>
                       <TableCell>{member.user?.email}</TableCell>
+                      {showDirectPerMember ? (
+                        <TableCell>{receiverStatusBadge(member)}</TableCell>
+                      ) : null}
                       <TableCell>{member.user?.phone || '-'}</TableCell>
                       <TableCell>
                         <Badge className={kycInfo.className || ''} variant={kycInfo.color}>
@@ -653,6 +959,12 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            {showDirectPerMember && (
+                              <DropdownMenuItem onClick={() => openReceiverDialog(member)}>
+                                <Landmark className="w-4 h-4 mr-2" />
+                                Coordonnées de réception (cycle)
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onClick={() => setKycModal(member)}>
                               <FileText className="w-4 h-4 mr-2" />
                               Voir le document KYC
@@ -722,6 +1034,101 @@ export default function MembersTab({ tontineId, tontineName, tontineStatus }) {
           onClose={() => setKycModal(null)}
         />
       )}
+
+      {/* Coordonnées réception — paiement direct */}
+      <Dialog open={!!receiverEditMember} onOpenChange={(o) => !o && setReceiverEditMember(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Coordonnées pour recevoir les cotisations</DialogTitle>
+            <DialogDescription>
+              Lorsque ce membre est bénéficiaire, les autres utiliseront ces informations pour payer.{' '}
+              <strong>{receiverEditMember?.user?.fullName}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          {receiverMode === 'cl_transferencia' && (
+            <div className="space-y-3 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="recv-rut">RUT *</Label>
+                <Input
+                  id="recv-rut"
+                  value={receiverForm.clRut}
+                  onChange={(e) => setReceiverForm({ ...receiverForm, clRut: e.target.value })}
+                  placeholder="12.345.678-9"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="recv-bank">Banque *</Label>
+                <Input
+                  id="recv-bank"
+                  value={receiverForm.clBank}
+                  onChange={(e) => setReceiverForm({ ...receiverForm, clBank: e.target.value })}
+                  placeholder="BancoEstado, …"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Type de compte</Label>
+                <Select
+                  value={receiverForm.clAccountType || '_none'}
+                  onValueChange={(v) =>
+                    setReceiverForm({ ...receiverForm, clAccountType: v === '_none' ? '' : v })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_none">—</SelectItem>
+                    <SelectItem value="Cuenta vista">Cuenta vista</SelectItem>
+                    <SelectItem value="Cuenta corriente">Cuenta corriente</SelectItem>
+                    <SelectItem value="Cuenta RUT">Cuenta RUT</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="recv-acc">Numéro de compte *</Label>
+                <Input
+                  id="recv-acc"
+                  value={receiverForm.clAccountNumber}
+                  onChange={(e) => setReceiverForm({ ...receiverForm, clAccountNumber: e.target.value })}
+                  placeholder="Numéro de cuenta"
+                />
+              </div>
+            </div>
+          )}
+          {receiverMode === 'koho_interac' && (
+            <div className="space-y-2 py-2">
+              <Label htmlFor="recv-email-k">Email KOHO (réception) *</Label>
+              <Input
+                id="recv-email-k"
+                type="email"
+                value={receiverForm.emailOrId}
+                onChange={(e) => setReceiverForm({ ...receiverForm, emailOrId: e.target.value })}
+                placeholder="paiement@koho.ca"
+              />
+            </div>
+          )}
+          {receiverMode === 'email_generic' && (
+            <div className="space-y-2 py-2">
+              <Label htmlFor="recv-gen">Email ou identifiant *</Label>
+              <Input
+                id="recv-gen"
+                type="text"
+                value={receiverForm.emailOrId}
+                onChange={(e) => setReceiverForm({ ...receiverForm, emailOrId: e.target.value })}
+                placeholder="contact@…"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setReceiverEditMember(null)}>
+              Annuler
+            </Button>
+            <Button type="button" onClick={saveReceiverPayment} disabled={savingReceiver}>
+              {savingReceiver ? 'Enregistrement…' : 'Enregistrer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Remove Member Confirmation */}
       <Dialog 

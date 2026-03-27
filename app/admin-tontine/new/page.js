@@ -3,6 +3,11 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import {
+  normalizeTontineName,
+  isTontineNameTaken,
+  TONTINE_NAME_TAKEN_MSG,
+} from '@/lib/tontine-name'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,7 +21,15 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { ArrowLeft, Save } from 'lucide-react'
-import { getCurrencyByCountry, getCurrencyInfo, formatCurrency } from '@/lib/currency-utils'
+import { getCurrencyByCountry, getCurrencyInfo } from '@/lib/currency-utils'
+import {
+  receiverFieldModeForCountry,
+  serializeChileReceiver,
+  contributionAmountStep,
+  contributionAmountPlaceholder,
+  directPerMemberMarkerJson,
+} from '@/lib/tontine-receiver'
+import { ensureUniqueInviteCode } from '@/lib/tontine-invite-code'
 
 export default function NewTontinePage() {
   const router = useRouter()
@@ -30,8 +43,14 @@ export default function NewTontinePage() {
     contributionAmount: '',
     frequency: 'monthly',
     kohoReceiverEmail: '',
-    paymentMode: 'direct' // 'direct' ou 'via_admin'
+    clRut: '',
+    clBank: '',
+    clAccountType: '',
+    clAccountNumber: '',
+    paymentMode: 'direct',
   })
+
+  const receiverMode = receiverFieldModeForCountry(adminCountry)
 
   useEffect(() => {
     loadAdminInfo()
@@ -84,22 +103,68 @@ export default function NewTontinePage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) throw new Error('Non authentifié')
 
+      const trimmedName = normalizeTontineName(formData.name)
+      if (!trimmedName) {
+        throw new Error('Le nom de la tontine est requis')
+      }
+
+      if (await isTontineNameTaken(supabase, trimmedName)) {
+        throw new Error(TONTINE_NAME_TAKEN_MSG)
+      }
+
+      let kohoReceiverEmail = ''
+      if (formData.paymentMode === 'direct') {
+        // Une coordonnée par bénéficiaire : saisie dans l’onglet Membres après création
+        kohoReceiverEmail = directPerMemberMarkerJson()
+      } else if (receiverMode === 'cl_transferencia') {
+        const rut = formData.clRut.trim()
+        const bank = formData.clBank.trim()
+        const accountNumber = formData.clAccountNumber.trim()
+        const accountType = formData.clAccountType.trim()
+        if (!rut || !bank || !accountNumber) {
+          throw new Error('RUT, banque et numéro de compte sont requis pour le Chili')
+        }
+        kohoReceiverEmail = serializeChileReceiver({
+          rut,
+          bank,
+          accountType,
+          accountNumber,
+        })
+      } else {
+        kohoReceiverEmail = formData.kohoReceiverEmail.trim()
+        if (!kohoReceiverEmail) {
+          throw new Error(
+            receiverMode === 'koho_interac'
+              ? 'L’email KOHO est requis'
+              : 'Les coordonnées de réception des paiements sont requises'
+          )
+        }
+      }
+
+      const inviteCode = await ensureUniqueInviteCode(supabase)
+
       const { data, error } = await supabase
         .from('tontines')
         .insert([{
-          name: formData.name,
+          name: trimmedName,
           contributionAmount: parseFloat(formData.contributionAmount),
           frequency: formData.frequency,
           adminId: session.user.id,
-          kohoReceiverEmail: formData.kohoReceiverEmail,
+          kohoReceiverEmail,
           paymentMode: formData.paymentMode,
-          currency: currency, // Devise automatiquement configurée selon le pays de l'admin
-          status: 'active'
+          currency: currency,
+          status: 'active',
+          inviteCode,
         }])
         .select()
         .single()
 
-      if (error) throw error
+      if (error) {
+        if (error.code === '23505') {
+          throw new Error(TONTINE_NAME_TAKEN_MSG)
+        }
+        throw error
+      }
 
       toast({
         title: 'Tontine créée!',
@@ -171,8 +236,9 @@ export default function NewTontinePage() {
                   <Input
                     id="amount"
                     type="number"
-                    step="0.01"
-                    placeholder="100.00"
+                    step={contributionAmountStep(currency)}
+                    min={contributionAmountStep(currency) === '1' ? '1' : undefined}
+                    placeholder={contributionAmountPlaceholder(currency)}
                     value={formData.contributionAmount}
                     onChange={(e) => setFormData({ ...formData, contributionAmount: e.target.value })}
                     className={!loadingAdmin && currency ? "pl-8" : ""}
@@ -221,27 +287,113 @@ export default function NewTontinePage() {
               </Select>
               <p className="text-xs text-solidarpay-text/70">
                 {formData.paymentMode === 'direct' 
-                  ? 'Les membres paieront directement la personne qui recevra la tontine'
+                  ? 'Les membres paieront directement la personne qui reçoit le cycle. Vous renseignerez les coordonnées bancaires (ou email) de chaque membre dans l’onglet Membres.'
                   : 'Les membres vous paieront, et vous pourrez payer le bénéficiaire une fois que tous ont payé'}
               </p>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email KOHO (récepteur) *</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="paiement@koho.ca"
-                value={formData.kohoReceiverEmail}
-                onChange={(e) => setFormData({ ...formData, kohoReceiverEmail: e.target.value })}
-                required
-              />
-              <p className="text-xs text-solidarpay-text/70">
-                {formData.paymentMode === 'direct' 
-                  ? 'Email KOHO du bénéficiaire qui recevra les paiements'
-                  : 'Votre email KOHO pour recevoir les paiements des membres'}
-              </p>
-            </div>
+            {formData.paymentMode === 'direct' && (
+              <div className="rounded-lg border border-cyan-200 bg-cyan-50/80 p-4 text-sm text-solidarpay-text">
+                <p className="font-medium">Paiement direct</p>
+                <p className="mt-1 text-xs text-solidarpay-text/80">
+                  Après création, ouvrez la tontine → <strong>Membres</strong> et saisissez pour chaque participant les coordonnées sur lesquelles il recevra les cotisations lorsqu’il sera bénéficiaire (RUT, banque, compte pour le Chili, ou email KOHO selon le pays de l’admin).
+                </p>
+              </div>
+            )}
+
+            {formData.paymentMode === 'via_admin' && receiverMode === 'cl_transferencia' && (
+              <div className="space-y-4 rounded-lg border border-solidarpay-border bg-slate-50/80 p-4">
+                <p className="text-sm font-medium text-solidarpay-text">
+                  Coordonnées transferencia / cuenta RUT (Chili)
+                </p>
+                <p className="text-xs text-solidarpay-text/70">
+                  Ces informations seront affichées aux membres pour effectuer leur virement bancaire.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="clRut">RUT du bénéficiaire *</Label>
+                  <Input
+                    id="clRut"
+                    placeholder="12.345.678-9"
+                    value={formData.clRut}
+                    onChange={(e) => setFormData({ ...formData, clRut: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="clBank">Banque *</Label>
+                  <Input
+                    id="clBank"
+                    placeholder="BancoEstado, Banco de Chile, etc."
+                    value={formData.clBank}
+                    onChange={(e) => setFormData({ ...formData, clBank: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="clAccountType">Type de compte</Label>
+                  <Select
+                    value={formData.clAccountType || '_none'}
+                    onValueChange={(v) =>
+                      setFormData({ ...formData, clAccountType: v === '_none' ? '' : v })
+                    }
+                  >
+                    <SelectTrigger id="clAccountType">
+                      <SelectValue placeholder="Sélectionner" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_none">—</SelectItem>
+                      <SelectItem value="Cuenta vista">Cuenta vista</SelectItem>
+                      <SelectItem value="Cuenta corriente">Cuenta corriente</SelectItem>
+                      <SelectItem value="Cuenta RUT">Cuenta RUT</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="clAccountNumber">Numéro de compte *</Label>
+                  <Input
+                    id="clAccountNumber"
+                    placeholder="Numéro de cuenta"
+                    value={formData.clAccountNumber}
+                    onChange={(e) => setFormData({ ...formData, clAccountNumber: e.target.value })}
+                    required
+                  />
+                </div>
+              </div>
+            )}
+
+            {formData.paymentMode === 'via_admin' && receiverMode === 'koho_interac' && (
+              <div className="space-y-2">
+                <Label htmlFor="email">Email KOHO (réception) *</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="paiement@koho.ca"
+                  value={formData.kohoReceiverEmail}
+                  onChange={(e) => setFormData({ ...formData, kohoReceiverEmail: e.target.value })}
+                  required
+                />
+                <p className="text-xs text-solidarpay-text/70">
+                  Votre email KOHO pour recevoir les cotisations des membres
+                </p>
+              </div>
+            )}
+
+            {formData.paymentMode === 'via_admin' && receiverMode === 'email_generic' && (
+              <div className="space-y-2">
+                <Label htmlFor="email">Email ou identifiant de réception des paiements *</Label>
+                <Input
+                  id="email"
+                  type="text"
+                  placeholder="contact@exemple.fr ou identifiant fourni par votre banque"
+                  value={formData.kohoReceiverEmail}
+                  onChange={(e) => setFormData({ ...formData, kohoReceiverEmail: e.target.value })}
+                  required
+                />
+                <p className="text-xs text-solidarpay-text/70">
+                  Indiquez l’adresse ou l’identifiant que les membres utiliseront pour vous verser la cotisation (virement, PayPal, etc.).
+                </p>
+              </div>
+            )}
 
             <div className="flex gap-2 pt-4">
               <Button

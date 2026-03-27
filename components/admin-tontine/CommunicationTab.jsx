@@ -19,6 +19,7 @@ import {
 export default function CommunicationTab({ tontineId, tontineName }) {
   const { toast } = useToast()
   const [messages, setMessages] = useState([])
+  const [repliesByMessageId, setRepliesByMessageId] = useState({})
   const [newMessage, setNewMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
@@ -46,7 +47,36 @@ export default function CommunicationTab({ tontineId, tontineName }) {
         .order('createdAt', { ascending: false })
 
       if (error) throw error
-      setMessages(data || [])
+      const list = data || []
+      setMessages(list)
+
+      const messageIds = list.map((m) => m.id)
+      if (messageIds.length === 0) {
+        setRepliesByMessageId({})
+        return
+      }
+
+      const { data: replies, error: repliesError } = await supabase
+        .from('tontine_message_replies')
+        .select(`
+          *,
+          user:users!tontine_message_replies_userId_fkey (
+            id,
+            fullName,
+            email
+          )
+        `)
+        .in('messageId', messageIds)
+        .order('createdAt', { ascending: true })
+
+      if (repliesError) throw repliesError
+
+      const grouped = {}
+      for (const r of replies || []) {
+        if (!grouped[r.messageId]) grouped[r.messageId] = []
+        grouped[r.messageId].push(r)
+      }
+      setRepliesByMessageId(grouped)
     } catch (error) {
       console.error('Error loading messages:', error)
       toast({
@@ -225,6 +255,33 @@ export default function CommunicationTab({ tontineId, tontineName }) {
                         </span>
                       </div>
                       <p className="text-solidarpay-text whitespace-pre-wrap">{message.message}</p>
+                      {(repliesByMessageId[message.id] || []).length > 0 ? (
+                        <div className="mt-3 border-t pt-3 space-y-2">
+                          <p className="text-xs uppercase tracking-wide text-solidarpay-text/60">
+                            Réponses des membres
+                          </p>
+                          {(repliesByMessageId[message.id] || []).map((reply) => (
+                            <div key={reply.id} className="bg-slate-50 rounded-md p-3 border">
+                              <div className="flex items-center gap-2 text-xs text-solidarpay-text/60 mb-1">
+                                <span className="font-medium text-solidarpay-text">
+                                  {reply.user?.fullName || 'Membre'}
+                                </span>
+                                <span>•</span>
+                                <span>
+                                  {new Date(reply.createdAt).toLocaleDateString('fr-FR', {
+                                    day: 'numeric',
+                                    month: 'long',
+                                    year: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              </div>
+                              <p className="text-sm whitespace-pre-wrap">{reply.reply}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                     <Button
                       variant="ghost"

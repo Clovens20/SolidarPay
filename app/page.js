@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
@@ -11,12 +12,53 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
-import LandingPage from '@/components/landing/LandingPage'
-import { formatCurrency, getCurrencyInfo } from '@/lib/currency-utils'
-import CompleteProfileModal from '@/components/profile/CompleteProfileModal'
-import TontineMessages from '@/components/member/TontineMessages'
+import { formatCurrency, getCurrencyInfo, getCurrencyByCountry } from '@/lib/currency-utils'
+import {
+  receiverFieldModeForCountry,
+  serializeChileReceiver,
+  contributionAmountStep,
+  contributionAmountPlaceholder,
+  parseReceiverStorage,
+  buildMemberPaymentCopyText,
+  getReceiverRawForPayment,
+  directPerMemberMarkerJson,
+} from '@/lib/tontine-receiver'
+import {
+  normalizeTontineName,
+  isTontineNameTaken,
+  TONTINE_NAME_TAKEN_MSG,
+} from '@/lib/tontine-name'
+import { resolveTontineByInviteInput } from '@/lib/tontine-invite-code'
+import ReceiverDetails from '@/components/tontine/ReceiverDetails'
+
+const LandingPage = dynamic(() => import('@/components/landing/LandingPage'), {
+  loading: () => (
+    <div className="min-h-screen bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-100 flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-600 mx-auto" />
+        <p className="mt-4 text-gray-600">Chargement…</p>
+      </div>
+    </div>
+  ),
+})
+
+const CompleteProfileModal = dynamic(() =>
+  import('@/components/profile/CompleteProfileModal').then((m) => m.default)
+)
+
+const TontineMessages = dynamic(() =>
+  import('@/components/member/TontineMessages').then((m) => m.default)
+)
 import { 
   Users, 
   DollarSign, 
@@ -34,9 +76,8 @@ import {
   TrendingUp,
   History,
   User,
-  ShieldCheck,
-  Upload,
-  X
+  UserPlus,
+  MapPin,
 } from 'lucide-react'
 
 export default function App() {
@@ -59,13 +100,23 @@ export default function App() {
   const [newTontineAmount, setNewTontineAmount] = useState('')
   const [newTontineFrequency, setNewTontineFrequency] = useState('monthly')
   const [newTontineKohoEmail, setNewTontineKohoEmail] = useState('')
+  const [newTontinePaymentMode, setNewTontinePaymentMode] = useState('direct')
+  const [newTontineClRut, setNewTontineClRut] = useState('')
+  const [newTontineClBank, setNewTontineClBank] = useState('')
+  const [newTontineClAccountType, setNewTontineClAccountType] = useState('')
+  const [newTontineClAccountNumber, setNewTontineClAccountNumber] = useState('')
+  const [adminCreateCurrency, setAdminCreateCurrency] = useState('CAD')
   const [selectedMembers, setSelectedMembers] = useState([])
   const [logoUrl, setLogoUrl] = useState(null)
-  const [kycStatus, setKycStatus] = useState(null)
-  const [kycLoading, setKycLoading] = useState(false)
-  const [showKYCAlert, setShowKYCAlert] = useState(true)
   const [showCompleteProfile, setShowCompleteProfile] = useState(false)
-  const [hasPaymentMethod, setHasPaymentMethod] = useState(false)
+
+  const [joinInviteInput, setJoinInviteInput] = useState('')
+  const [joinMessage, setJoinMessage] = useState('')
+  const [joinSubmitting, setJoinSubmitting] = useState(false)
+  const [myJoinRequests, setMyJoinRequests] = useState([])
+  const [countryTontines, setCountryTontines] = useState([])
+  const [countryDiscoverLabel, setCountryDiscoverLabel] = useState('')
+  const [joinRowLoadingId, setJoinRowLoadingId] = useState(null)
 
   useEffect(() => {
     checkAuth()
@@ -76,36 +127,29 @@ export default function App() {
   useEffect(() => {
     if (user) {
       loadData()
-      if (user.role === 'member') {
-        loadKYCStatus()
-      }
     }
   }, [user])
 
-  const loadKYCStatus = async () => {
-    if (!user?.id) return
-    
-    try {
-      setKycLoading(true)
-      const { data, error } = await supabase
-        .from('kyc_documents')
-        .select('*')
-        .eq('userId', user.id)
-        .order('createdAt', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error loading KYC status:', error)
-      } else {
-        setKycStatus(data)
-      }
-    } catch (error) {
-      console.error('Error loading KYC status:', error)
-    } finally {
-      setKycLoading(false)
+  useEffect(() => {
+    if (!user || user.role !== 'admin' || !user.country) {
+      setAdminCreateCurrency('CAD')
+      return
     }
-  }
+    let cancelled = false
+    ;(async () => {
+      const { data } = await supabase
+        .from('payment_countries')
+        .select('currency')
+        .eq('code', user.country)
+        .maybeSingle()
+      if (!cancelled) {
+        setAdminCreateCurrency(data?.currency || getCurrencyByCountry(user.country))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [user?.id, user?.role, user?.country])
 
   const checkProfileCompletion = async () => {
     if (!user?.id) return
@@ -123,7 +167,6 @@ export default function App() {
         .limit(1)
 
       const hasPayment = paymentMethods && paymentMethods.length > 0
-      setHasPaymentMethod(hasPayment)
 
       // Afficher la modal si le profil est incomplet
       if (needsCountry || !hasPayment) {
@@ -173,7 +216,6 @@ export default function App() {
       if (error || !validSession) {
         localStorage.removeItem('solidarpay_session')
         localStorage.removeItem('solidarpay_user')
-        setLoading(false)
         return
       }
       
@@ -197,14 +239,19 @@ export default function App() {
       // Si erreur de parsing ou autre, nettoyer et afficher landing page
       localStorage.removeItem('solidarpay_session')
       localStorage.removeItem('solidarpay_user')
+    } finally {
+      // Obligatoire après chaque return dans try : sinon écran « Chargement... » infini
+      // si la navigation client (router.push) ne démonte pas la page tout de suite.
+      setLoading(false)
     }
-    
-    setLoading(false)
   }
 
   const loadData = async () => {
     try {
       if (!user) return
+
+      setCountryTontines([])
+      setCountryDiscoverLabel('')
 
       let tontinesData = []
 
@@ -251,6 +298,79 @@ export default function App() {
           // L'utilisateur n'est membre d'aucune tontine
           tontinesData = []
         }
+
+        const { data: joinReqRows, error: joinReqErr } = await supabase
+          .from('tontine_join_requests')
+          .select('id, status, createdAt, tontineId, message')
+          .eq('userId', user.id)
+          .order('createdAt', { ascending: false })
+          .limit(30)
+
+        if (!joinReqErr && joinReqRows?.length) {
+          const allReqTontineIds = [...new Set(joinReqRows.map((r) => r.tontineId))]
+          let nameById = {}
+          if (allReqTontineIds.length) {
+            const { data: tontNameRows } = await supabase
+              .from('tontines')
+              .select('id, name')
+              .in('id', allReqTontineIds)
+            nameById = Object.fromEntries((tontNameRows || []).map((t) => [t.id, t.name]))
+          }
+          setMyJoinRequests(
+            joinReqRows.map((r) => ({
+              ...r,
+              tontineName: nameById[r.tontineId] || null,
+            }))
+          )
+        } else {
+          setMyJoinRequests([])
+        }
+
+        let discover = []
+        let discLabel = ''
+        if (user.country) {
+          const { data: pcRow } = await supabase
+            .from('payment_countries')
+            .select('name')
+            .eq('code', user.country)
+            .maybeSingle()
+          discLabel = pcRow?.name || user.country
+
+          const { data: adminsSameCountry } = await supabase
+            .from('users')
+            .select('id')
+            .eq('role', 'admin')
+            .eq('country', user.country)
+
+          const adminIds = (adminsSameCountry || []).map((a) => a.id)
+          if (adminIds.length) {
+            const { data: disc, error: discoverErr } = await supabase
+              .from('tontines')
+              .select(`
+                id,
+                name,
+                status,
+                contributionAmount,
+                currency,
+                frequency,
+                adminId,
+                admin:adminId (id, fullName, email, country),
+                members:tontine_members(count)
+              `)
+              .eq('status', 'active')
+              .in('adminId', adminIds)
+
+            if (!discoverErr && disc) {
+              discover = disc
+                .filter((t) => t.admin?.country === user.country)
+                .sort((a, b) =>
+                  (a.name || '').localeCompare(b.name || '', 'fr', { sensitivity: 'base' })
+                )
+            }
+          }
+        }
+        setCountryTontines(discover)
+        setCountryDiscoverLabel(discLabel)
       }
 
       setTontines(tontinesData)
@@ -273,6 +393,106 @@ export default function App() {
         description: 'Impossible de charger les données',
         variant: 'destructive',
       })
+    }
+  }
+
+  const sendJoinRequestForTontine = async (tontine, messageText) => {
+    if (!user?.id || user.role !== 'member') return { ok: false }
+    if (tontine.status !== 'active') {
+      toast({
+        title: 'Tontine non disponible',
+        description: 'Cette tontine n’accepte pas de nouveaux membres pour le moment.',
+        variant: 'destructive',
+      })
+      return { ok: false }
+    }
+    const { data: existing } = await supabase
+      .from('tontine_members')
+      .select('id')
+      .eq('tontineId', tontine.id)
+      .eq('userId', user.id)
+      .maybeSingle()
+    if (existing) {
+      toast({
+        title: 'Déjà membre',
+        description: `Vous faites déjà partie de « ${tontine.name} ».`,
+      })
+      return { ok: false }
+    }
+    const { error } = await supabase.from('tontine_join_requests').insert({
+      tontineId: tontine.id,
+      userId: user.id,
+      message: messageText || null,
+    })
+    if (error) {
+      if (error.code === '23505') {
+        toast({
+          title: 'Demande déjà en cours',
+          description: 'Vous avez déjà une demande en attente pour cette tontine.',
+          variant: 'destructive',
+        })
+        return { ok: false }
+      }
+      throw error
+    }
+    toast({
+      title: 'Demande envoyée',
+      description: `L’administrateur de « ${tontine.name} » pourra accepter votre demande dans l’onglet Membres.`,
+    })
+    return { ok: true }
+  }
+
+  const submitJoinRequest = async (e) => {
+    e?.preventDefault?.()
+    if (!user?.id || user.role !== 'member') return
+    setJoinSubmitting(true)
+    try {
+      const resolved = await resolveTontineByInviteInput(supabase, joinInviteInput)
+      if (resolved.error) {
+        toast({
+          title: 'Impossible de continuer',
+          description: resolved.error,
+          variant: 'destructive',
+        })
+        return
+      }
+      const result = await sendJoinRequestForTontine(
+        resolved.tontine,
+        joinMessage.trim() ? joinMessage.trim() : null
+      )
+      if (result.ok) {
+        setJoinInviteInput('')
+        setJoinMessage('')
+        loadData()
+      }
+    } catch (err) {
+      toast({
+        title: 'Erreur',
+        description: err.message || 'Envoi impossible',
+        variant: 'destructive',
+      })
+    } finally {
+      setJoinSubmitting(false)
+    }
+  }
+
+  const handleJoinRequestFromList = async (row) => {
+    if (!user?.id || user.role !== 'member') return
+    setJoinRowLoadingId(row.id)
+    try {
+      const result = await sendJoinRequestForTontine(
+        row,
+        joinMessage.trim() ? joinMessage.trim() : null
+      )
+      if (result.ok) loadData()
+    } catch (err) {
+      toast({
+        title: 'Erreur',
+        description: err.message || 'Envoi impossible',
+        variant: 'destructive',
+      })
+    } finally {
+      setJoinRowLoadingId(null)
     }
   }
 
@@ -316,27 +536,27 @@ export default function App() {
         }
       }
 
-      // Load tontine details with members
-      const tontineRes = await fetch(`/api/tontines/${tontineId}`)
-      const tontineData = await tontineRes.json()
+      const [tontineRes, cycleActiveRes, cyclesRes] = await Promise.all([
+        fetch(`/api/tontines/${tontineId}`),
+        fetch(`/api/cycles/active/${tontineId}`),
+        fetch(`/api/cycles/tontine/${tontineId}`),
+      ])
+      const [tontineData, cycleData, cyclesData] = await Promise.all([
+        tontineRes.json(),
+        cycleActiveRes.json(),
+        cyclesRes.json(),
+      ])
+
       setSelectedTontine(tontineData)
-
-      // Load active cycle
-      const cycleRes = await fetch(`/api/cycles/active/${tontineId}`)
-      const cycleData = await cycleRes.json()
       setActiveCycle(cycleData)
+      setCycles(cyclesData)
 
-      // Load contributions if there's an active cycle
       if (cycleData?.id) {
         const contribRes = await fetch(`/api/contributions/cycle/${cycleData.id}`)
-        const contribData = await contribRes.json()
-        setContributions(contribData)
+        setContributions(await contribRes.json())
+      } else {
+        setContributions([])
       }
-
-      // Load all cycles
-      const cyclesRes = await fetch(`/api/cycles/tontine/${tontineId}`)
-      const cyclesData = await cyclesRes.json()
-      setCycles(cyclesData)
     } catch (error) {
       console.error('Error loading tontine:', error)
     }
@@ -391,11 +611,25 @@ export default function App() {
   const openInteracEmail = () => {
     if (!activeCycle || !selectedTontine) return
 
+    const raw = getReceiverRawForPayment(
+      selectedTontine,
+      activeCycle.beneficiary?.id,
+      selectedTontine.members
+    )
+    const parsed = parseReceiverStorage(raw)
+    if (parsed.kind !== 'email') {
+      toast({
+        title: 'Interac non disponible',
+        description:
+          'Pour cette tontine, utilisez les coordonnées bancaires affichées ou le bouton « Copier ».',
+      })
+      return
+    }
+
     const beneficiary = activeCycle.beneficiary
     const amount = selectedTontine.contributionAmount
     const currency = selectedTontine.currency || 'CAD'
-    const currencyInfo = getCurrencyInfo(currency)
-    const kohoEmail = selectedTontine.kohoReceiverEmail
+    const kohoEmail = parsed.email
 
     const subject = encodeURIComponent(`Cotisation SolidarPay - ${selectedTontine.name}`)
     const body = encodeURIComponent(
@@ -478,18 +712,58 @@ export default function App() {
 
   const handleCreateTontine = async (e) => {
     e.preventDefault()
-    
+
+    const receiverMode = receiverFieldModeForCountry(user?.country)
+    const trimmedName = normalizeTontineName(newTontineName)
+    if (!trimmedName) {
+      toast({
+        title: 'Erreur',
+        description: 'Le nom de la tontine est requis',
+        variant: 'destructive',
+      })
+      return
+    }
+
     try {
+      if (await isTontineNameTaken(supabase, trimmedName)) {
+        throw new Error(TONTINE_NAME_TAKEN_MSG)
+      }
+
+      let kohoReceiverEmail = ''
+      if (newTontinePaymentMode === 'direct') {
+        kohoReceiverEmail = directPerMemberMarkerJson()
+      } else if (receiverMode === 'cl_transferencia') {
+        const rut = newTontineClRut.trim()
+        const bank = newTontineClBank.trim()
+        const accountNumber = newTontineClAccountNumber.trim()
+        const accountType = newTontineClAccountType.trim()
+        if (!rut || !bank || !accountNumber) {
+          throw new Error('RUT, banque et numéro de compte sont requis pour le Chili')
+        }
+        kohoReceiverEmail = serializeChileReceiver({ rut, bank, accountType, accountNumber })
+      } else {
+        kohoReceiverEmail = newTontineKohoEmail.trim()
+        if (!kohoReceiverEmail) {
+          throw new Error(
+            receiverMode === 'koho_interac'
+              ? 'L’email KOHO est requis'
+              : 'Les coordonnées de réception des paiements sont requises'
+          )
+        }
+      }
+
       const res = await fetch('/api/tontines', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: newTontineName,
+          name: trimmedName,
           contributionAmount: parseFloat(newTontineAmount),
           frequency: newTontineFrequency,
           adminId: user.id,
-          kohoReceiverEmail: newTontineKohoEmail,
+          kohoReceiverEmail,
           memberIds: selectedMembers,
+          currency: adminCreateCurrency,
+          paymentMode: newTontinePaymentMode,
         }),
       })
 
@@ -501,13 +775,16 @@ export default function App() {
         description: 'La tontine a été créée avec succès',
       })
 
-      // Reset form
       setNewTontineName('')
       setNewTontineAmount('')
       setNewTontineKohoEmail('')
+      setNewTontinePaymentMode('direct')
+      setNewTontineClRut('')
+      setNewTontineClBank('')
+      setNewTontineClAccountType('')
+      setNewTontineClAccountNumber('')
       setSelectedMembers([])
 
-      // Reload data
       loadData()
     } catch (error) {
       toast({
@@ -596,6 +873,9 @@ export default function App() {
       })
     }
   }
+
+  const tontineFrequencyLabel = (f) =>
+    f === 'monthly' ? 'Mensuelle' : f === 'biweekly' ? 'Bi-hebdomadaire' : 'Hebdomadaire'
 
   // Loading state
   if (loading) {
@@ -687,6 +967,10 @@ export default function App() {
       <main className="container mx-auto px-4 py-4 md:py-8">
         {user.role === 'admin' ? (
           // ADMIN VIEW
+          (() => {
+            const adminReceiverMode = receiverFieldModeForCountry(user?.country)
+            const adminCurrencyInfo = getCurrencyInfo(adminCreateCurrency)
+            return (
           <Tabs defaultValue="dashboard" className="w-full">
             <TabsList className="grid w-full grid-cols-3 mb-4 md:mb-8 text-xs sm:text-sm">
               <TabsTrigger value="dashboard" className="text-xs sm:text-sm">Tableau de bord</TabsTrigger>
@@ -896,9 +1180,11 @@ export default function App() {
                           <Label>Nom</Label>
                           <p className="text-lg font-medium">{selectedTontine.name}</p>
                         </div>
-                        <div>
-                          <Label>Email KOHO</Label>
-                          <p className="text-lg font-medium">{selectedTontine.kohoReceiverEmail}</p>
+                        <div className="sm:col-span-2">
+                          <Label>Coordonnées de réception</Label>
+                          <div className="text-lg">
+                            <ReceiverDetails raw={selectedTontine.kohoReceiverEmail} />
+                          </div>
                         </div>
                         <div>
                           <Label>Montant</Label>
@@ -998,16 +1284,33 @@ export default function App() {
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="amount">Montant de cotisation</Label>
-                        <Input
-                          id="amount"
-                          type="number"
-                          step="0.01"
-                          placeholder="100.00"
-                          value={newTontineAmount}
-                          onChange={(e) => setNewTontineAmount(e.target.value)}
-                          required
-                        />
+                        <Label htmlFor="amount">
+                          Montant de cotisation
+                          <span className="ml-2 text-sm font-normal text-muted-foreground">
+                            ({adminCurrencyInfo.code})
+                          </span>
+                        </Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                            {adminCurrencyInfo.symbol}
+                          </span>
+                          <Input
+                            id="amount"
+                            type="number"
+                            step={contributionAmountStep(adminCreateCurrency)}
+                            min={contributionAmountStep(adminCreateCurrency) === '1' ? '1' : undefined}
+                            placeholder={contributionAmountPlaceholder(adminCreateCurrency)}
+                            value={newTontineAmount}
+                            onChange={(e) => setNewTontineAmount(e.target.value)}
+                            className="pl-8"
+                            required
+                          />
+                        </div>
+                        {user?.country ? (
+                          <p className="text-xs text-muted-foreground">
+                            Devise selon votre pays ({user.country}) : {adminCurrencyInfo.name}
+                          </p>
+                        ) : null}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="frequency">Fréquence</Label>
@@ -1024,16 +1327,116 @@ export default function App() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="koho-email">Email KOHO pour Interac</Label>
-                      <Input
-                        id="koho-email"
-                        type="email"
-                        placeholder="koho@example.com"
-                        value={newTontineKohoEmail}
-                        onChange={(e) => setNewTontineKohoEmail(e.target.value)}
-                        required
-                      />
+                      <Label htmlFor="paymentModeHome">Mode de paiement</Label>
+                      <Select value={newTontinePaymentMode} onValueChange={setNewTontinePaymentMode}>
+                        <SelectTrigger id="paymentModeHome">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="direct">
+                            Paiement direct — les membres paient le bénéficiaire
+                          </SelectItem>
+                          <SelectItem value="via_admin">
+                            Paiement via admin — les membres vous paient, vous payez le bénéficiaire
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
+                    {newTontinePaymentMode === 'direct' && (
+                      <div className="rounded-lg border border-cyan-200 bg-cyan-50/80 p-4 text-sm">
+                        <p className="font-medium">Paiement direct</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Après création, renseignez les coordonnées de chaque membre (onglet Membres de la tontine).
+                        </p>
+                      </div>
+                    )}
+                    {newTontinePaymentMode === 'via_admin' && adminReceiverMode === 'cl_transferencia' && (
+                      <div className="space-y-4 rounded-lg border bg-slate-50/80 p-4">
+                        <p className="text-sm font-medium">Coordonnées transferencia / cuenta RUT (Chili)</p>
+                        <p className="text-xs text-muted-foreground">
+                          Affichées aux membres pour effectuer le virement bancaire.
+                        </p>
+                        <div className="space-y-2">
+                          <Label htmlFor="cl-rut-home">RUT du bénéficiaire</Label>
+                          <Input
+                            id="cl-rut-home"
+                            placeholder="12.345.678-9"
+                            value={newTontineClRut}
+                            onChange={(e) => setNewTontineClRut(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="cl-bank-home">Banque</Label>
+                          <Input
+                            id="cl-bank-home"
+                            placeholder="BancoEstado, Banco de Chile…"
+                            value={newTontineClBank}
+                            onChange={(e) => setNewTontineClBank(e.target.value)}
+                            required
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="cl-type-home">Type de compte</Label>
+                          <Select
+                            value={newTontineClAccountType || '_none'}
+                            onValueChange={(v) => setNewTontineClAccountType(v === '_none' ? '' : v)}
+                          >
+                            <SelectTrigger id="cl-type-home">
+                              <SelectValue placeholder="Sélectionner" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="_none">—</SelectItem>
+                              <SelectItem value="Cuenta vista">Cuenta vista</SelectItem>
+                              <SelectItem value="Cuenta corriente">Cuenta corriente</SelectItem>
+                              <SelectItem value="Cuenta RUT">Cuenta RUT</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="cl-acc-home">Numéro de compte</Label>
+                          <Input
+                            id="cl-acc-home"
+                            placeholder="Numéro de cuenta"
+                            value={newTontineClAccountNumber}
+                            onChange={(e) => setNewTontineClAccountNumber(e.target.value)}
+                            required
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {newTontinePaymentMode === 'via_admin' && adminReceiverMode === 'koho_interac' && (
+                      <div className="space-y-2">
+                        <Label htmlFor="koho-email">Email KOHO (réception)</Label>
+                        <Input
+                          id="koho-email"
+                          type="email"
+                          placeholder="paiement@koho.ca"
+                          value={newTontineKohoEmail}
+                          onChange={(e) => setNewTontineKohoEmail(e.target.value)}
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Votre email KOHO pour recevoir les cotisations
+                        </p>
+                      </div>
+                    )}
+                    {newTontinePaymentMode === 'via_admin' && adminReceiverMode === 'email_generic' && (
+                      <div className="space-y-2">
+                        <Label htmlFor="recv-generic-home">Email ou identifiant de réception</Label>
+                        <Input
+                          id="recv-generic-home"
+                          type="text"
+                          placeholder="contact@exemple.fr"
+                          value={newTontineKohoEmail}
+                          onChange={(e) => setNewTontineKohoEmail(e.target.value)}
+                          required
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Identifiant utilisé par les membres pour vous verser la cotisation.
+                        </p>
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <Label>Ajouter des membres (optionnel)</Label>
                       <div className="border rounded-lg p-4 max-h-48 overflow-y-auto space-y-2">
@@ -1068,87 +1471,199 @@ export default function App() {
               </Card>
             </TabsContent>
           </Tabs>
+            )
+          })()
         ) : (
           // MEMBER VIEW
           <div className="space-y-6">
-            {/* KYC Alert - Visible si pas encore vérifié */}
-            {user.role === 'member' && kycStatus && 
-             kycStatus.status !== 'approved' && 
-             kycStatus.status !== 'verifie' && 
-             showKYCAlert && (
-              <Card className="border-orange-300 bg-gradient-to-r from-orange-50 to-amber-50">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-4 flex-1">
-                      <div className="flex-shrink-0 w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center">
-                        <ShieldCheck className="w-6 h-6 text-white" />
+            {!user.country ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MapPin className="h-5 w-5" />
+                    Tontines dans votre pays
+                  </CardTitle>
+                  <CardDescription>
+                    Indiquez votre pays dans votre profil pour afficher les tontines actives gérées par des admins du
+                    même pays.
+                  </CardDescription>
+                </CardHeader>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <MapPin className="h-5 w-5" />
+                    Tontines en {countryDiscoverLabel || user.country}
+                  </CardTitle>
+                  <CardDescription>
+                    Liste des tontines <strong>actives</strong> dont l’administrateur est enregistré dans le même pays
+                    que vous (ex. Chili ↔ Chili). Utilisez « Demander » pour envoyer une demande d’adhésion, ou le code
+                    d’invitation ci-dessous si vous préférez.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {countryTontines.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Aucune tontine active dans ce pays pour le moment. Vous pouvez rejoindre une tontine avec un code
+                      ou un identifiant ci-dessous.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="rounded-md border overflow-x-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Tontine</TableHead>
+                              <TableHead>Administrateur</TableHead>
+                              <TableHead className="text-right">Cotisation</TableHead>
+                              <TableHead>Fréquence</TableHead>
+                              <TableHead className="text-center">Membres</TableHead>
+                              <TableHead className="text-right">Action</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {countryTontines.map((row) => {
+                              const isMember = tontines.some((t) => t.id === row.id)
+                              const pending = myJoinRequests.some(
+                                (r) => r.tontineId === row.id && r.status === 'pending'
+                              )
+                              const mcount = row.members?.[0]?.count ?? 0
+                              return (
+                                <TableRow key={row.id}>
+                                  <TableCell className="font-medium">{row.name}</TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">
+                                    {row.admin?.fullName || '—'}
+                                  </TableCell>
+                                  <TableCell className="text-right tabular-nums">
+                                    {formatCurrency(row.contributionAmount, row.currency || 'CAD')}
+                                  </TableCell>
+                                  <TableCell className="text-sm">
+                                    {tontineFrequencyLabel(row.frequency)}
+                                  </TableCell>
+                                  <TableCell className="text-center">{mcount}</TableCell>
+                                  <TableCell className="text-right">
+                                    {isMember ? (
+                                      <Badge variant="secondary">Membre</Badge>
+                                    ) : pending ? (
+                                      <Badge variant="outline" className="bg-amber-50 text-amber-900 border-amber-200">
+                                        Demande envoyée
+                                      </Badge>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="border-cyan-600 text-cyan-700 hover:bg-cyan-50"
+                                        disabled={joinRowLoadingId !== null || joinSubmitting}
+                                        onClick={() => handleJoinRequestFromList(row)}
+                                      >
+                                        {joinRowLoadingId === row.id ? 'Envoi…' : 'Demander'}
+                                      </Button>
+                                    )}
+                                  </TableCell>
+                                </TableRow>
+                              )
+                            })}
+                          </TableBody>
+                        </Table>
                       </div>
-                      <div className="flex-1">
-                        <h3 className="text-lg font-semibold text-orange-900 mb-1">
-                          Vérifiez votre identité
-                        </h3>
-                        <p className="text-sm text-orange-700 mb-4">
-                          Pour accéder à toutes les fonctionnalités de SolidarPay et participer aux tontines, vous devez vérifier votre identité en soumettant un document d'identité.
-                        </p>
-                        <Button
-                          onClick={() => router.push('/profile?tab=kyc')}
-                          className="bg-orange-600 hover:bg-orange-700 text-white"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          Soumettre mon document
-                        </Button>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowKYCAlert(false)}
-                      className="text-orange-700 hover:text-orange-900"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
-                  </div>
+                      <p className="text-xs text-muted-foreground mt-3">
+                        Le message optionnel du bloc « Rejoindre une tontine » ci-dessous est joint à la demande si vous
+                        le remplissez avant de cliquer sur « Demander ».
+                      </p>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             )}
 
-            {/* KYC Alert - Si aucun document soumis */}
-            {user.role === 'member' && !kycLoading && !kycStatus && showKYCAlert && (
-              <Card className="border-orange-300 bg-gradient-to-r from-orange-50 to-amber-50">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-4 flex-1">
-                      <div className="flex-shrink-0 w-12 h-12 bg-orange-500 rounded-full flex items-center justify-center">
-                        <ShieldCheck className="w-6 h-6 text-white" />
-                      </div>
-                      <div className="flex-1">
-                        <h3 className="text-lg font-semibold text-orange-900 mb-1">
-                          Vérifiez votre identité
-                        </h3>
-                        <p className="text-sm text-orange-700 mb-4">
-                          Pour accéder à toutes les fonctionnalités de SolidarPay et participer aux tontines, vous devez vérifier votre identité en soumettant un document d'identité.
-                        </p>
-                        <Button
-                          onClick={() => router.push('/profile?tab=kyc')}
-                          className="bg-orange-600 hover:bg-orange-700 text-white"
-                        >
-                          <Upload className="w-4 h-4 mr-2" />
-                          Soumettre mon document
-                        </Button>
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setShowKYCAlert(false)}
-                      className="text-orange-700 hover:text-orange-900"
-                    >
-                      <X className="w-4 h-4" />
-                    </Button>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <UserPlus className="h-5 w-5" />
+                  Rejoindre une tontine
+                </CardTitle>
+                <CardDescription>
+                  Entrez le <strong>code d’invitation</strong> ou l’<strong>identifiant</strong> (UUID) que vous a
+                  transmis l’administrateur de la tontine.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={submitJoinRequest} className="space-y-3 max-w-lg">
+                  <div>
+                    <Label htmlFor="join-invite">Code ou identifiant</Label>
+                    <Input
+                      id="join-invite"
+                      value={joinInviteInput}
+                      onChange={(e) => setJoinInviteInput(e.target.value)}
+                      placeholder="Ex. ABCD2XYZ"
+                      className="mt-1 font-mono"
+                      autoComplete="off"
+                    />
                   </div>
+                  <div>
+                    <Label htmlFor="join-msg">Message pour l’admin (optionnel)</Label>
+                    <Input
+                      id="join-msg"
+                      value={joinMessage}
+                      onChange={(e) => setJoinMessage(e.target.value)}
+                      placeholder="Brève présentation…"
+                      className="mt-1"
+                    />
+                  </div>
+                  <Button
+                    type="submit"
+                    disabled={joinSubmitting || !joinInviteInput.trim()}
+                    className="bg-gradient-to-r from-cyan-600 to-blue-600"
+                  >
+                    {joinSubmitting ? 'Envoi…' : 'Envoyer la demande'}
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            {myJoinRequests.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Mes demandes d’adhésion</CardTitle>
+                  <CardDescription>Suivi auprès des administrateurs de tontine</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {myJoinRequests.map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between border rounded-lg p-3 text-sm"
+                    >
+                      <div>
+                        <p className="font-medium">{r.tontineName || 'Tontine'}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(r.createdAt).toLocaleString('fr-FR')}
+                        </p>
+                        {r.message ? (
+                          <p className="text-xs text-muted-foreground mt-1 italic">« {r.message} »</p>
+                        ) : null}
+                      </div>
+                      <Badge
+                        variant={r.status === 'pending' ? 'outline' : 'secondary'}
+                        className={
+                          r.status === 'accepted'
+                            ? 'bg-green-50 text-green-800 border-green-200'
+                            : r.status === 'rejected'
+                              ? 'bg-red-50 text-red-800 border-red-200'
+                              : ''
+                        }
+                      >
+                        {r.status === 'pending'
+                          ? 'En attente'
+                          : r.status === 'accepted'
+                            ? 'Acceptée'
+                            : 'Refusée'}
+                      </Badge>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
-            )}
+            ) : null}
 
             {/* Tontine Selector */}
             {tontines.length > 0 ? (
@@ -1189,10 +1704,11 @@ export default function App() {
                       Aucune tontine
                     </h3>
                     <p className="text-sm text-gray-600 mb-4">
-                      Vous n'êtes actuellement membre d'aucune tontine.
+                      Vous n&apos;êtes actuellement membre d&apos;aucune tontine.
                     </p>
                     <p className="text-xs text-gray-500">
-                      Contactez un administrateur de tontine pour être ajouté à une tontine existante.
+                      Utilisez le formulaire ci-dessus avec le code ou l’identifiant fourni par l’administrateur, ou
+                      demandez-lui de vous ajouter depuis son espace.
                     </p>
                   </div>
                 </CardContent>
@@ -1265,12 +1781,58 @@ export default function App() {
                         </p>
                       </div>
                       <div className="space-y-2 text-sm">
+                        {(() => {
+                          const paymentRaw = getReceiverRawForPayment(
+                            selectedTontine,
+                            activeCycle?.beneficiary?.id,
+                            selectedTontine?.members
+                          )
+                          const recv = parseReceiverStorage(paymentRaw)
+                          if (recv.kind === 'cl_transferencia') {
+                            return (
+                              <div className="space-y-1 mb-2">
+                                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  Coordonnées bancaires (transferencia)
+                                </p>
+                                <p className="font-medium">{recv.bank || '—'}</p>
+                                <p>RUT : {recv.rut || '—'}</p>
+                                {recv.accountType ? <p>Type : {recv.accountType}</p> : null}
+                                <p>N° compte : {recv.accountNumber || '—'}</p>
+                              </div>
+                            )
+                          }
+                          if (recv.kind === 'email') {
+                            return (
+                              <div className="flex justify-between gap-2 mb-2">
+                                <span className="text-muted-foreground shrink-0">Email de réception :</span>
+                                <span className="font-medium break-all text-right">{recv.email}</span>
+                              </div>
+                            )
+                          }
+                          if (recv.kind === 'empty') {
+                            return (
+                              <p className="text-muted-foreground mb-2">
+                                Aucune coordonnée renseignée pour le bénéficiaire de ce cycle. L’administrateur doit
+                                compléter les coordonnées de ce membre (paiement direct).
+                              </p>
+                            )
+                          }
+                          if (recv.kind === 'direct_per_member') {
+                            return (
+                              <p className="text-muted-foreground mb-2">
+                                Mode direct par membre : coordonnées non encore renseignées pour le bénéficiaire actuel.
+                              </p>
+                            )
+                          }
+                          return (
+                            <div className="mb-2">
+                              <p className="text-muted-foreground text-xs mb-1">Coordonnées</p>
+                              <p className="font-medium whitespace-pre-line break-words">{recv.display}</p>
+                            </div>
+                          )
+                        })()}
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">Email KOHO:</span>
-                          <span className="font-medium">{selectedTontine.kohoReceiverEmail}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Statut:</span>
+                          <span className="text-muted-foreground">Statut :</span>
                           {myContribution?.status === 'pending' && (
                             <Badge variant="outline" className="bg-yellow-50">En attente de paiement</Badge>
                           )}
@@ -1290,13 +1852,45 @@ export default function App() {
                     {myContribution?.status === 'pending' && (
                       <>
                         <div className="space-y-3">
-                          <p className="text-sm font-medium">Options de paiement via KOHO:</p>
-                          
-                          <Button 
-                            onClick={() => copyToClipboard(
-                              `Montant: ${formatCurrency(selectedTontine.contributionAmount, selectedTontine.currency || 'CAD')}\nEmail: ${selectedTontine.kohoReceiverEmail}`,
-                              'Informations de paiement'
-                            )}
+                          <p className="text-sm font-medium">
+                            {(() => {
+                              const rk = parseReceiverStorage(
+                                getReceiverRawForPayment(
+                                  selectedTontine,
+                                  activeCycle?.beneficiary?.id,
+                                  selectedTontine?.members
+                                )
+                              )
+                              if (rk.kind === 'cl_transferencia') {
+                                return 'Utilisez un virement bancaire avec les coordonnées ci-dessus.'
+                              }
+                              if (rk.kind === 'email') {
+                                return 'Options de paiement (Interac / courriel) :'
+                              }
+                              return 'Instructions de paiement :'
+                            })()}
+                          </p>
+
+                          <Button
+                            onClick={() => {
+                              const beneficiaryMember = selectedTontine.members?.find(
+                                (m) =>
+                                  String(m.userId || m.user?.id) ===
+                                  String(activeCycle?.beneficiary?.id || '')
+                              )
+                              copyToClipboard(
+                                buildMemberPaymentCopyText(
+                                  selectedTontine,
+                                  activeCycle?.beneficiary?.fullName,
+                                  formatCurrency(
+                                    selectedTontine.contributionAmount,
+                                    selectedTontine.currency || 'CAD'
+                                  ),
+                                  beneficiaryMember?.receiverPaymentStorage
+                                ),
+                                'Informations de paiement'
+                              )
+                            }}
                             variant="outline"
                             className="w-full justify-start"
                           >
@@ -1304,19 +1898,35 @@ export default function App() {
                             Copier les informations de paiement
                           </Button>
 
-                          <Button 
-                            onClick={openInteracEmail}
-                            variant="outline"
-                            className="w-full justify-start"
-                          >
-                            <ExternalLink className="h-4 w-4 mr-2" />
-                            Ouvrir l'email Interac pré-rempli
-                          </Button>
+                          {parseReceiverStorage(
+                            getReceiverRawForPayment(
+                              selectedTontine,
+                              activeCycle?.beneficiary?.id,
+                              selectedTontine?.members
+                            )
+                          ).kind === 'email' && (
+                            <Button
+                              onClick={openInteracEmail}
+                              variant="outline"
+                              className="w-full justify-start"
+                            >
+                              <ExternalLink className="h-4 w-4 mr-2" />
+                              Ouvrir l&apos;email Interac pré-rempli
+                            </Button>
+                          )}
                         </div>
 
                         <div className="border-t pt-4">
                           <p className="text-sm text-muted-foreground mb-3">
-                            Après avoir envoyé votre paiement via KOHO, cliquez sur le bouton ci-dessous:
+                            {parseReceiverStorage(
+                              getReceiverRawForPayment(
+                                selectedTontine,
+                                activeCycle?.beneficiary?.id,
+                                selectedTontine?.members
+                              )
+                            ).kind === 'cl_transferencia'
+                              ? 'Après votre virement, indiquez que vous avez payé ci-dessous :'
+                              : 'Après avoir envoyé votre paiement, cliquez sur le bouton ci-dessous :'}
                           </p>
                           <Button 
                             onClick={handleDeclarePayment}

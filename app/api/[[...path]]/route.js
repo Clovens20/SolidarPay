@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '../../../lib/supabase.js'
 import { sendWelcomeEmail, sendContributionReminder, sendBeneficiaryNotification } from '../../../lib/resend.js'
+import {
+  normalizeTontineName,
+  isTontineNameTaken,
+  TONTINE_NAME_TAKEN_MSG,
+} from '../../../lib/tontine-name.js'
+import { formatCurrency } from '../../../lib/currency-utils.js'
+import { shortReminderPaymentHint } from '../../../lib/tontine-receiver.js'
+import { ensureUniqueInviteCode } from '../../../lib/tontine-invite-code.js'
 import { v4 as uuidv4 } from 'uuid'
 
 // Helper function to handle errors
@@ -360,8 +368,10 @@ export async function POST(request) {
 
       if (userError) throw userError
 
-      // Send welcome email
-      await sendWelcomeEmail(email, fullName)
+      // Email de bienvenue en arrière-plan : ne pas bloquer la réponse (UX inscription instantanée)
+      void sendWelcomeEmail(email, fullName).catch((err) =>
+        console.error('sendWelcomeEmail:', err)
+      )
 
       return NextResponse.json({ user: userData, session: authData.session })
     }
@@ -404,23 +414,42 @@ export async function POST(request) {
     if (path === 'tontines') {
       const { name, contributionAmount, frequency, adminId, kohoReceiverEmail, memberIds, currency, paymentMode } = body
 
-      // Create tontine
+      const trimmedName = normalizeTontineName(name)
+      if (!trimmedName) {
+        return NextResponse.json(
+          { error: 'Le nom de la tontine est requis' },
+          { status: 400 }
+        )
+      }
+
+      if (await isTontineNameTaken(supabase, trimmedName)) {
+        return NextResponse.json({ error: TONTINE_NAME_TAKEN_MSG }, { status: 409 })
+      }
+
+      const inviteCode = await ensureUniqueInviteCode(supabase)
+
       const { data: tontine, error: tontineError } = await supabase
         .from('tontines')
         .insert([{
-          name,
+          name: trimmedName,
           contributionAmount,
           frequency,
           adminId,
           kohoReceiverEmail,
-          currency: currency || 'CAD', // Devise par défaut si non fournie
-          paymentMode: paymentMode || 'direct', // Mode de paiement par défaut
+          currency: currency || 'CAD',
+          paymentMode: paymentMode || 'direct',
           status: 'active',
+          inviteCode,
         }])
         .select()
         .single()
 
-      if (tontineError) throw tontineError
+      if (tontineError) {
+        if (tontineError.code === '23505') {
+          return NextResponse.json({ error: TONTINE_NAME_TAKEN_MSG }, { status: 409 })
+        }
+        throw tontineError
+      }
 
       // Add members with rotation order
       if (memberIds && memberIds.length > 0) {
@@ -447,7 +476,7 @@ export async function POST(request) {
       // Get tontine details
       const { data: tontine, error: tontineError } = await supabase
         .from('tontines')
-        .select('contributionAmount')
+        .select('contributionAmount,currency')
         .eq('id', tontineId)
         .single()
 
@@ -520,10 +549,11 @@ export async function POST(request) {
         .single()
 
       if (beneficiary) {
+        const currency = tontine?.currency || 'CAD'
         await sendBeneficiaryNotification(
           beneficiary.email,
           beneficiary.fullName,
-          totalExpected,
+          formatCurrency(totalExpected, currency),
           count
         )
       }
@@ -642,7 +672,7 @@ export async function POST(request) {
         .select(`
           *,
           beneficiary:beneficiaryId (fullName),
-          tontine:tontineId (contributionAmount)
+          tontine:tontineId (contributionAmount, currency, kohoReceiverEmail)
         `)
         .eq('id', cycleId)
         .single()
@@ -660,13 +690,19 @@ export async function POST(request) {
 
       // Send reminders
       const results = []
+      const currency = cycle.tontine?.currency || 'CAD'
+      const amountFormatted = formatCurrency(cycle.tontine.contributionAmount, currency)
+      const paymentHint = shortReminderPaymentHint(cycle.tontine.kohoReceiverEmail)
+      const dueDateStr = new Date(cycle.endDate).toLocaleDateString('fr-FR')
+
       for (const contrib of contributions) {
         const result = await sendContributionReminder(
           contrib.user.email,
           contrib.user.fullName,
-          cycle.tontine.contributionAmount,
+          amountFormatted,
           cycle.beneficiary.fullName,
-          new Date(cycle.endDate).toLocaleDateString('fr-FR')
+          dueDateStr,
+          paymentHint
         )
         results.push(result)
       }

@@ -59,6 +59,7 @@ export default function AdminDashboard() {
   const [alerts, setAlerts] = useState([])
   const [timeline, setTimeline] = useState([])
   const [loading, setLoading] = useState(true)
+  const [secondaryLoading, setSecondaryLoading] = useState(true)
 
   // Load all stats in parallel
   const loadStats = useCallback(async () => {
@@ -281,18 +282,21 @@ export default function AdminDashboard() {
   const loadDashboardData = useCallback(async () => {
     try {
       setLoading(true)
+      setSecondaryLoading(true)
       const statsResult = await loadStats()
-      await Promise.all([
-        loadCharts(),
-        loadTimeline()
-      ])
+      // Afficher rapidement le dashboard après les stats essentielles.
       if (statsResult?.kycPending !== undefined) {
         loadAlerts(statsResult.kycPending)
       }
+      setLoading(false)
+
+      // Charger les graphes/timeline en arrière-plan.
+      await Promise.all([loadCharts(), loadTimeline()])
     } catch (error) {
       console.error('Error loading dashboard:', error)
     } finally {
       setLoading(false)
+      setSecondaryLoading(false)
     }
   }, [loadStats, loadCharts, loadAlerts, loadTimeline])
 
@@ -307,12 +311,12 @@ export default function AdminDashboard() {
     
     initializeDashboard()
     
-    // Reduce refresh to 60 seconds instead of 30
+    // Réduction de charge : rafraîchissement toutes les 3 minutes, uniquement onglet visible.
     const interval = setInterval(() => {
-      if (mounted) {
+      if (mounted && typeof document !== 'undefined' && document.visibilityState === 'visible') {
         loadDashboardData()
       }
-    }, 60000)
+    }, 180000)
     
     return () => {
       mounted = false
@@ -385,16 +389,20 @@ export default function AdminDashboard() {
             <CardDescription>3 derniers mois</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={charts.registrations}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="count" stroke="#0891B2" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
+            {secondaryLoading ? (
+              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={charts.registrations}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line type="monotone" dataKey="count" stroke="#0891B2" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -404,16 +412,20 @@ export default function AdminDashboard() {
             <CardDescription>3 derniers mois</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={charts.tontinesCreated}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="count" fill="#0891B2" />
-              </BarChart>
-            </ResponsiveContainer>
+            {secondaryLoading ? (
+              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={charts.tontinesCreated}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="count" fill="#0891B2" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -426,17 +438,21 @@ export default function AdminDashboard() {
             <CardDescription>Approuvées/Rejetées par semaine</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={charts.kycStats}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="week" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="approved" fill="#10B981" />
-                <Bar dataKey="rejected" fill="#EF4444" />
-              </BarChart>
-            </ResponsiveContainer>
+            {secondaryLoading ? (
+              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={charts.kycStats}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="week" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="approved" fill="#10B981" />
+                  <Bar dataKey="rejected" fill="#EF4444" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -446,25 +462,29 @@ export default function AdminDashboard() {
             <CardDescription>Utilisateurs par pays</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={charts.geography}
-                  cx="50%"
-                  cy="50%"
-                  labelLine={false}
-                  label={({ country, percent }) => `${country} ${(percent * 100).toFixed(0)}%`}
-                  outerRadius={100}
-                  fill="#8884d8"
-                  dataKey="users"
-                >
-                  {charts.geography.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {secondaryLoading ? (
+              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={charts.geography}
+                    cx="50%"
+                    cy="50%"
+                    labelLine={false}
+                    label={({ country, percent }) => `${country} ${(percent * 100).toFixed(0)}%`}
+                    outerRadius={100}
+                    fill="#8884d8"
+                    dataKey="users"
+                  >
+                    {charts.geography.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>

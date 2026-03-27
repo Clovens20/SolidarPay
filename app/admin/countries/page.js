@@ -28,8 +28,11 @@ import {
 } from '@/components/ui/table'
 import { useToast } from '@/hooks/use-toast'
 import { logSystemEvent } from '@/lib/system-logger'
-
-const PAYMENT_METHODS = ['interac', 'credit_card', 'bank_transfer', 'paypal', 'mobile_money', 'zelle', 'cash_app']
+import {
+  PAYMENT_METHOD_LABELS,
+  ADMIN_PAYMENT_METHOD_KEYS,
+  paymentMethodAdminLabel,
+} from '@/lib/payment-methods'
 
 export default function CountriesPage() {
   const [countries, setCountries] = useState([])
@@ -317,7 +320,7 @@ export default function CountriesPage() {
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
                         {Array.isArray(country.paymentMethods) && country.paymentMethods.map((method, idx) => (
-                          <Badge key={idx} variant="secondary">{method}</Badge>
+                          <Badge key={idx} variant="secondary">{PAYMENT_METHOD_LABELS[method] || method}</Badge>
                         ))}
                       </div>
                     </TableCell>
@@ -399,7 +402,7 @@ export default function CountriesPage() {
             <div className="space-y-2">
               <Label>Méthodes de paiement disponibles</Label>
               <div className="grid grid-cols-2 gap-3 p-4 border rounded-lg">
-                {PAYMENT_METHODS.map((method) => (
+                {ADMIN_PAYMENT_METHOD_KEYS.map((method) => (
                   <div key={method} className="flex items-center space-x-2">
                     <Checkbox
                       id={`method_${method}`}
@@ -410,13 +413,7 @@ export default function CountriesPage() {
                       htmlFor={`method_${method}`}
                       className="text-sm font-normal cursor-pointer"
                     >
-                      {method === 'interac' && 'Interac'}
-                      {method === 'credit_card' && 'Carte de crédit'}
-                      {method === 'bank_transfer' && 'Virement bancaire'}
-                      {method === 'paypal' && 'PayPal'}
-                      {method === 'mobile_money' && 'Mobile Money'}
-                      {method === 'zelle' && 'Zelle'}
-                      {method === 'cash_app' && 'Cash App'}
+                      {paymentMethodAdminLabel(method)}
                     </Label>
                   </div>
                 ))}
@@ -501,7 +498,7 @@ export default function CountriesPage() {
             <div className="space-y-2">
               <Label>Méthodes de paiement disponibles</Label>
               <div className="grid grid-cols-2 gap-3 p-4 border rounded-lg">
-                {PAYMENT_METHODS.map((method) => (
+                {ADMIN_PAYMENT_METHOD_KEYS.map((method) => (
                   <div key={method} className="flex items-center space-x-2">
                     <Checkbox
                       id={`new_method_${method}`}
@@ -512,13 +509,7 @@ export default function CountriesPage() {
                       htmlFor={`new_method_${method}`}
                       className="text-sm font-normal cursor-pointer"
                     >
-                      {method === 'interac' && 'Interac'}
-                      {method === 'credit_card' && 'Carte de crédit'}
-                      {method === 'bank_transfer' && 'Virement bancaire'}
-                      {method === 'paypal' && 'PayPal'}
-                      {method === 'mobile_money' && 'Mobile Money'}
-                      {method === 'zelle' && 'Zelle'}
-                      {method === 'cash_app' && 'Cash App'}
+                      {paymentMethodAdminLabel(method)}
                     </Label>
                   </div>
                 ))}

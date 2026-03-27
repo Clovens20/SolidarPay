@@ -121,23 +121,27 @@ export default function RegisterPage() {
       const data = await res.json()
       if (data.error) throw new Error(data.error)
 
-      // Sauvegarder la session
       localStorage.setItem('solidarpay_session', JSON.stringify(data.session))
       localStorage.setItem('solidarpay_user', JSON.stringify(data.user))
 
-      toast({
-        title: 'Inscription réussie!',
-        description: `Bienvenue ${data.user.fullName}! Vérifiez votre email pour confirmer votre compte.`,
-      })
-
-      // Rediriger selon le rôle
-      if (data.user.role === 'admin') {
-        router.push('/admin-tontine')
-        return
+      if (data.session?.access_token && data.session?.refresh_token) {
+        void supabase.auth
+          .setSession({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token,
+          })
+          .catch((err) => console.warn('setSession après inscription:', err))
       }
 
-      // Rediriger les membres vers la page principale
-      router.push('/')
+      const destination = data.user.role === 'admin' ? '/admin-tontine' : '/'
+      router.replace(destination)
+
+      queueMicrotask(() => {
+        toast({
+          title: 'Compte SolidarPay créé',
+          description: `Bienvenue, ${data.user.fullName} ! Votre compte est prêt. Si vous avez reçu un e-mail de confirmation, ouvrez-le pour valider votre adresse.`,
+        })
+      })
     } catch (error) {
       toast({
         title: 'Erreur d\'inscription',

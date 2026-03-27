@@ -4,8 +4,8 @@ const nextConfig = {
     unoptimized: true,
   },
   experimental: {
-    // Remove if not using Server Components
     serverComponentsExternalPackages: ['mongodb'],
+    optimizePackageImports: ['lucide-react'],
   },
   webpack(config, { dev }) {
     if (dev) {
@@ -18,9 +18,11 @@ const nextConfig = {
     }
     return config;
   },
+  // En dev, un maxInactiveAge trop bas expulse des chunks du cache et provoque
+  // "Cannot find module './xxxx.js'" au prochain chargement (webpack-runtime désynchronisé).
   onDemandEntries: {
-    maxInactiveAge: 10000,
-    pagesBufferLength: 2,
+    maxInactiveAge: 5 * 60 * 1000,
+    pagesBufferLength: 8,
   },
   async headers() {
     return [

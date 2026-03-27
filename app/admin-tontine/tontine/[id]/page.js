@@ -26,6 +26,7 @@ export default function ManageTontinePage() {
   const router = useRouter()
   const { toast } = useToast()
   const [tontine, setTontine] = useState(null)
+  const [pendingValidationCount, setPendingValidationCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -55,6 +56,28 @@ export default function ManageTontinePage() {
       }
 
       setTontine(data)
+
+      const { data: activeCycles, error: activeCyclesError } = await supabase
+        .from('cycles')
+        .select('id')
+        .eq('tontineId', data.id)
+        .eq('status', 'active')
+
+      if (activeCyclesError) throw activeCyclesError
+
+      const activeCycleIds = (activeCycles || []).map((c) => c.id)
+      if (activeCycleIds.length === 0) {
+        setPendingValidationCount(0)
+      } else {
+        const { count, error: pendingErr } = await supabase
+          .from('contributions')
+          .select('id', { count: 'exact', head: true })
+          .in('cycleId', activeCycleIds)
+          .eq('status', 'pending_validation')
+
+        if (pendingErr) throw pendingErr
+        setPendingValidationCount(count || 0)
+      }
     } catch (error) {
       console.error('Error loading tontine:', error)
       router.push('/admin-tontine')
@@ -157,7 +180,9 @@ export default function ManageTontinePage() {
         <TabsList className="grid w-full grid-cols-5">
           <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>
           <TabsTrigger value="members">Membres</TabsTrigger>
-          <TabsTrigger value="cycles">Cycles</TabsTrigger>
+          <TabsTrigger value="cycles">
+            {pendingValidationCount > 0 ? `Cycles (${pendingValidationCount})` : 'Cycles'}
+          </TabsTrigger>
           <TabsTrigger value="communication">Communication</TabsTrigger>
           <TabsTrigger value="settings">Paramètres</TabsTrigger>
         </TabsList>
@@ -167,11 +192,19 @@ export default function ManageTontinePage() {
         </TabsContent>
 
         <TabsContent value="members" className="mt-6">
-          <MembersTab tontineId={tontine.id} tontineName={tontine.name} tontineStatus={tontine.status} />
+          <MembersTab
+            tontineId={tontine.id}
+            tontineName={tontine.name}
+            tontineStatus={tontine.status}
+            paymentMode={tontine.paymentMode}
+            currency={tontine.currency}
+            kohoReceiverEmail={tontine.kohoReceiverEmail}
+            adminId={tontine.adminId}
+          />
         </TabsContent>
 
         <TabsContent value="cycles" className="mt-6">
-          <CyclesTab tontineId={tontine.id} />
+          <CyclesTab tontineId={tontine.id} onRefreshMeta={loadTontine} />
         </TabsContent>
 
         <TabsContent value="communication" className="mt-6">

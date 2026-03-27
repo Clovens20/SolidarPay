@@ -9,20 +9,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { CheckCircle, ShieldCheck } from 'lucide-react'
 
 export default function AddMemberModal({ user, tontineName, onConfirm, onCancel }) {
   if (!user) return null
-
-  const getKYCStatus = (kyc) => {
-    if (!kyc || kyc.status !== 'approved') {
-      return { label: 'Non vérifié', color: 'destructive' }
-    }
-    return { label: 'Vérifié', color: 'default', className: 'bg-green-100 text-green-800' }
-  }
-
-  const kycInfo = getKYCStatus(user.kyc)
 
   return (
     <Dialog open={!!user} onOpenChange={onCancel}>
@@ -46,22 +35,9 @@ export default function AddMemberModal({ user, tontineName, onConfirm, onCancel 
             </div>
           </div>
 
-          {/* KYC Status */}
-          <div className="flex items-center justify-between p-3 border rounded-lg">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-solidarpay-primary" />
-              <span className="text-sm font-medium">Statut KYC:</span>
-            </div>
-            <Badge className={kycInfo.className || ''} variant={kycInfo.color}>
-              <CheckCircle className="w-3 h-3 mr-1" />
-              {kycInfo.label}
-            </Badge>
-          </div>
-
-          {/* Info Note */}
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-900">
-              Son document KYC sera accessible dans votre interface une fois ajouté.
+              Le membre sera ajouté immédiatement à la tontine (mode MVP sans blocage KYC).
             </p>
           </div>
         </div>

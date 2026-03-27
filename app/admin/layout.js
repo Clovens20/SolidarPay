@@ -89,39 +89,27 @@ export default function AdminLayout({ children }) {
       setLoading(false)
       return
     }
-    
+
+    // Important perf: ne pas relancer checkAuth à chaque changement d'onglet/page admin
+    // sinon l'UI affiche un loader inutilement et donne une impression de lenteur.
     checkAuth()
     loadKycPending()
-    
+
     // Set up real-time subscription for KYC updates
-    let channel = null
-    const setupSubscription = async () => {
-      channel = supabase
-        .channel(`kyc-updates-${Date.now()}`)
-        .on('postgres_changes', 
-          { event: '*', schema: 'public', table: 'kyc_documents' },
-          () => {
-            loadKycPending()
-          }
-        )
-        .subscribe()
-
-      // Vérifier la connexion après un court délai
-      setTimeout(() => {
-        if (channel && channel.state === 'SUBSCRIBED') {
-          // Subscription active
-        }
-      }, 1000)
-    }
-
-    setupSubscription()
+    const channel = supabase
+      .channel(`kyc-updates-${Date.now()}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'kyc_documents' }, () => {
+        loadKycPending()
+      })
+      .subscribe()
 
     return () => {
-      if (channel) {
-        supabase.removeChannel(channel)
-      }
+      supabase.removeChannel(channel)
     }
-  }, [pathname, checkAuth, loadKycPending])
+    // checkAuth/loadKycPending sont mémorisées avec useCallback.
+    // pathname n'est volontairement pas dépendance pour éviter les reloads lents entre pages admin.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Sur la page de login, afficher directement les children sans layout
   if (isLoginPage) {
