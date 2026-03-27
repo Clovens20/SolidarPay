@@ -36,10 +36,12 @@ import {
   Legend,
   ResponsiveContainer
 } from 'recharts'
+import { useIsMobile } from '@/hooks/use-mobile'
 
 const COLORS = ['#0891B2', '#0E7490', '#06B6D4', '#14B8A6', '#10B981']
 
 export default function AdminDashboard() {
+  const isMobile = useIsMobile()
   const [stats, setStats] = useState({
     totalUsers: 0,
     totalMembers: 0,
@@ -472,8 +474,12 @@ export default function AdminDashboard() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={({ country, percent }) => `${country} ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={100}
+                    label={
+                      isMobile
+                        ? false
+                        : ({ country, percent }) => `${country} ${(percent * 100).toFixed(0)}%`
+                    }
+                    outerRadius={isMobile ? 85 : 100}
                     fill="#8884d8"
                     dataKey="users"
                   >
@@ -482,6 +488,7 @@ export default function AdminDashboard() {
                     ))}
                   </Pie>
                   <Tooltip />
+                  {isMobile ? <Legend layout="horizontal" verticalAlign="bottom" /> : null}
                 </PieChart>
               </ResponsiveContainer>
             )}

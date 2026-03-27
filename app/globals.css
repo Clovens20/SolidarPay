@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Mobile-first : éviter débordement horizontal et texte qui se chevauche */
+html {
+  overflow-x: clip;
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
@@ -9,6 +15,14 @@ body {
         "Helvetica Neue", sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: clip;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* Flex / grid : autoriser le rétrécissement pour que le texte ne passe pas par-dessus */
+.min-w-safe {
+  min-width: 0;
 }
 
 code {
@@ -136,8 +150,14 @@ code {
     @apply border-border;
     }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
     }
+  img,
+  svg,
+  video {
+    max-width: 100%;
+    height: auto;
+  }
 }
 
 /* Animations for landing page */

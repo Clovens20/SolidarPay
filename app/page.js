@@ -913,8 +913,8 @@ export default function App() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-cyan-50">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
-        <div className="container mx-auto px-4 py-3 md:py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2 md:gap-4">
+        <div className="container mx-auto px-3 sm:px-4 py-3 md:py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-2 md:gap-4">
             {logoUrl ? (
               <img 
                 src={logoUrl} 
@@ -931,14 +931,14 @@ export default function App() {
             <div className={`w-8 h-8 md:w-12 md:h-12 bg-gradient-to-br from-cyan-600 to-blue-600 rounded-lg flex items-center justify-center ${logoUrl ? 'hidden' : ''}`}>
               <span className="text-white font-bold text-sm md:text-lg">S</span>
             </div>
-            <div>
-              <h1 className="text-lg md:text-2xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent">
+            <div className="min-w-0">
+              <h1 className="text-lg md:text-2xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent truncate sm:truncate-none">
                 SolidarPay
               </h1>
               <p className="hidden sm:block text-xs md:text-sm text-slate-600">Tontine digitalisée</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 md:gap-3">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 md:gap-3">
             <div className="hidden sm:block text-right">
               <p className="text-xs md:text-sm font-medium">{user.fullName}</p>
               <Badge variant={user.role === 'admin' ? 'default' : 'secondary'} className="text-xs">
@@ -964,7 +964,7 @@ export default function App() {
       </header>
 
       {/* Main Content */}
-      <main className="container mx-auto px-4 py-4 md:py-8">
+      <main className="container mx-auto min-w-0 px-3 sm:px-4 py-4 md:py-8">
         {user.role === 'admin' ? (
           // ADMIN VIEW
           (() => {

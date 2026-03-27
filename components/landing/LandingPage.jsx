@@ -14,7 +14,7 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen">
       <Navbar />
-      <main>
+      <main className="min-w-0 pt-16">
         <HeroSection />
         <WhatIsSection />
         <FeaturesSection />

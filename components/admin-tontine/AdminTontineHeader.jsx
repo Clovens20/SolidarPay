@@ -39,10 +39,10 @@ export default function AdminTontineHeader({ user, onMenuClick }) {
   }
 
   return (
-    <header className="fixed top-0 left-0 right-0 h-16 bg-white border-b border-solidarpay-border z-50">
-      <div className="flex items-center justify-between h-full px-4 md:px-6">
+    <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-white border-b border-solidarpay-border">
+      <div className="flex h-full items-center justify-between gap-2 px-3 md:px-6 overflow-hidden">
         {/* Logo and Title */}
-        <div className="flex items-center gap-2 md:gap-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-4 overflow-hidden">
           {/* Mobile Menu Button */}
           {isMobile && onMenuClick && (
             <Button
@@ -68,20 +68,22 @@ export default function AdminTontineHeader({ user, onMenuClick }) {
             <div className="w-8 h-8 bg-gradient-to-br from-solidarpay-primary to-solidarpay-secondary rounded-lg flex items-center justify-center hidden">
               <span className="text-white font-bold text-lg">S</span>
             </div>
-            <span className="text-lg md:text-xl font-bold text-solidarpay-text">SolidarPay</span>
+            <span className="truncate text-base font-bold text-solidarpay-text md:text-lg md:text-xl">
+              SolidarPay
+            </span>
           </div>
-          <div className="hidden md:block h-6 w-px bg-solidarpay-border" />
-          <span className="hidden md:block text-sm text-solidarpay-text/70">Admin Tontine</span>
+          <div className="hidden md:block h-6 w-px shrink-0 bg-solidarpay-border" />
+          <span className="hidden md:block shrink-0 text-sm text-solidarpay-text/70">Admin Tontine</span>
         </div>
 
         {/* Profile Dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-solidarpay-primary flex items-center justify-center text-white font-semibold">
+            <Button variant="ghost" className="flex max-w-[min(200px,45vw)] shrink-0 items-center gap-2 sm:max-w-none">
+              <div className="w-8 h-8 rounded-full bg-solidarpay-primary flex items-center justify-center text-white font-semibold shrink-0">
                 {user?.fullName?.charAt(0)?.toUpperCase() || 'A'}
               </div>
-              <span className="hidden sm:block text-sm font-medium text-solidarpay-text">
+              <span className="hidden min-w-0 truncate sm:block text-sm font-medium text-solidarpay-text">
                 {user?.fullName || 'Admin'}
               </span>
             </Button>

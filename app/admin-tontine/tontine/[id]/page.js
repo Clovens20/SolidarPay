@@ -155,36 +155,44 @@ export default function ManageTontinePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <button
             onClick={() => router.push('/admin-tontine')}
             className="text-sm text-solidarpay-text/70 hover:text-solidarpay-text mb-4"
           >
             ← Retour à mes tontines
           </button>
-          <h1 className="text-3xl font-bold text-solidarpay-text">{tontine.name}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-solidarpay-text break-words">{tontine.name}</h1>
           <p className="text-solidarpay-text/70 mt-1">Gérez votre tontine</p>
         </div>
         <Button
           variant="destructive"
           onClick={() => setShowDeleteDialog(true)}
-          className="mt-4"
+          className="mt-0 w-full shrink-0 sm:mt-4 sm:w-auto"
         >
           <Trash2 className="w-4 h-4 mr-2" />
           Supprimer la tontine
         </Button>
       </div>
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>
-          <TabsTrigger value="members">Membres</TabsTrigger>
-          <TabsTrigger value="cycles">
+      <Tabs defaultValue="overview" className="w-full min-w-0">
+        <TabsList className="flex w-full max-w-full flex-nowrap justify-start gap-1 overflow-x-auto overflow-y-hidden [scrollbar-width:thin]">
+          <TabsTrigger value="overview" className="shrink-0 basis-auto sm:flex-1">
+            Vue d&apos;ensemble
+          </TabsTrigger>
+          <TabsTrigger value="members" className="shrink-0 basis-auto sm:flex-1">
+            Membres
+          </TabsTrigger>
+          <TabsTrigger value="cycles" className="shrink-0 basis-auto sm:flex-1">
             {pendingValidationCount > 0 ? `Cycles (${pendingValidationCount})` : 'Cycles'}
           </TabsTrigger>
-          <TabsTrigger value="communication">Communication</TabsTrigger>
-          <TabsTrigger value="settings">Paramètres</TabsTrigger>
+          <TabsTrigger value="communication" className="shrink-0 basis-auto sm:flex-1">
+            Communication
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="shrink-0 basis-auto sm:flex-1">
+            Paramètres
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
