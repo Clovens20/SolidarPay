@@ -385,7 +385,19 @@ export async function POST(request) {
         password,
       })
 
-      if (error) throw error
+      if (error) {
+        const invalid =
+          error.code === 'invalid_credentials' ||
+          String(error.message || '').toLowerCase().includes('invalid login')
+        return NextResponse.json(
+          {
+            error: invalid
+              ? 'Email ou mot de passe incorrect.'
+              : error.message || 'Connexion impossible.',
+          },
+          { status: invalid ? 401 : 400 }
+        )
+      }
 
       // Get user details - utiliser .maybeSingle() pour éviter l'erreur si utilisateur non trouvé
       const { data: userData, error: userError } = await supabase

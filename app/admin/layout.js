@@ -17,37 +17,50 @@ export default function AdminLayout({ children }) {
   const isLoginPage = pathname === '/admin/login'
 
   const checkAuth = useCallback(async () => {
+    const withTimeout = (promise, ms, label) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} (${ms / 1000}s)`)), ms)
+        ),
+      ])
+
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session } } = await withTimeout(
+        supabase.auth.getSession(),
+        20000,
+        'Délai dépassé — connexion Supabase'
+      )
 
       if (!session) {
-        router.push('/admin/login')
+        router.replace('/admin/login')
         return
       }
 
-      const { data: userData, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', session.user.id)
-        .maybeSingle()
+      const { data: userData, error } = await withTimeout(
+        supabase.from('users').select('*').eq('id', session.user.id).maybeSingle(),
+        20000,
+        'Délai dépassé — lecture du profil'
+      )
 
       if (error) {
         console.error('Error fetching user:', error)
-        router.push('/admin/login')
+        router.replace('/admin/login')
         return
       }
 
       if (!userData) {
         console.error('User not found in database')
-        router.push('/admin/login')
+        router.replace('/admin/login')
         return
       }
 
+      /* /admin = interface super-admin plateforme uniquement (table users.role = super_admin) */
       if (userData.role !== 'super_admin') {
         if (userData.role === 'admin') {
-          router.push('/')
+          router.replace('/admin-tontine')
         } else {
-          router.push('/')
+          router.replace('/')
         }
         return
       }
@@ -55,39 +68,41 @@ export default function AdminLayout({ children }) {
       setUser(userData)
     } catch (error) {
       console.error('Auth error:', error)
-      router.push('/admin/login')
+      router.replace('/admin/login')
     } finally {
       setLoading(false)
     }
   }, [router])
 
+  /**
+   * Important : dépendre de `pathname`. Après login sur /admin/login → router.push('/admin'),
+   * le layout ne se remonte pas : avec [] seul, checkAuth ne s’exécutait jamais → user null + loading false → page blanche.
+   */
   useEffect(() => {
     if (pathname === '/admin/login') {
       setLoading(false)
       return
     }
 
+    setLoading(true)
     checkAuth()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [pathname, checkAuth])
 
   if (isLoginPage) {
     return <>{children}</>
   }
 
-  if (loading) {
+  if (loading || !user) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-solidarpay-bg">
-        <div className="text-center">
+        <div className="text-center px-4 max-w-md">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-solidarpay-primary mx-auto"></div>
-          <p className="mt-4 text-solidarpay-text">Chargement...</p>
+          <p className="mt-4 text-solidarpay-text">
+            {loading ? 'Chargement…' : 'Redirection…'}
+          </p>
         </div>
       </div>
     )
-  }
-
-  if (!user) {
-    return null
   }
 
   return (
