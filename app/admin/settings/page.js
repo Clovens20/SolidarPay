@@ -14,7 +14,8 @@ import { jsonbScalarToString, stringToJsonbValue } from '@/lib/jsonb-platform'
 export default function SettingsPage() {
   const [settings, setSettings] = useState({
     siteName: 'SolidarPay',
-    contactEmail: 'contact@solidarpay.com'
+    contactEmail: 'contact@solidarpay.com',
+    contactPhone: '',
   })
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -30,13 +31,14 @@ export default function SettingsPage() {
       const { data } = await supabase
         .from('platform_customization')
         .select('*')
-        .in('key', ['site_name', 'contact_email'])
+        .in('key', ['site_name', 'contact_email', 'contact_phone'])
 
       if (data) {
         const settingsMap = {}
         data.forEach((item) => {
           if (item.key === 'site_name') settingsMap.siteName = jsonbScalarToString(item.value) || 'SolidarPay'
           if (item.key === 'contact_email') settingsMap.contactEmail = jsonbScalarToString(item.value) || ''
+          if (item.key === 'contact_phone') settingsMap.contactPhone = jsonbScalarToString(item.value) || ''
         })
         setSettings((prev) => ({ ...prev, ...settingsMap }))
       }
@@ -53,24 +55,20 @@ export default function SettingsPage() {
       const { data: { user } } = await supabase.auth.getUser()
 
       // Sauvegarder les paramètres dans platform_customization
+      const keyDescriptions = {
+        site_name: 'Nom du site affiché sur la plateforme',
+        contact_email: 'Email de contact affiché aux utilisateurs',
+        contact_phone: 'Numéro de téléphone de contact affiché aux utilisateurs',
+      }
+
       const updates = [
-        {
-          key: 'site_name',
-          value: settings.siteName,
-          updatedBy: user?.id
-        },
-        {
-          key: 'contact_email',
-          value: settings.contactEmail,
-          updatedBy: user?.id
-        }
+        { key: 'site_name', value: settings.siteName, updatedBy: user?.id },
+        { key: 'contact_email', value: settings.contactEmail, updatedBy: user?.id },
+        { key: 'contact_phone', value: settings.contactPhone?.trim() ?? '', updatedBy: user?.id },
       ]
 
       for (const update of updates) {
-        const description =
-          update.key === 'site_name'
-            ? 'Nom du site affiché sur la plateforme'
-            : 'Email de contact affiché aux utilisateurs'
+        const description = keyDescriptions[update.key]
         const { error } = await supabase
           .from('platform_customization')
           .upsert(
@@ -88,9 +86,13 @@ export default function SettingsPage() {
       }
 
       await logSystemSettingsChange(
-        'site_name / contact_email',
+        'site_name / contact_email / contact_phone',
         null,
-        { siteName: settings.siteName, contactEmail: settings.contactEmail },
+        {
+          siteName: settings.siteName,
+          contactEmail: settings.contactEmail,
+          contactPhone: settings.contactPhone?.trim() ?? '',
+        },
         user?.id
       )
 
@@ -150,6 +152,18 @@ export default function SettingsPage() {
                   value={settings.contactEmail}
                   onChange={(e) => setSettings({ ...settings, contactEmail: e.target.value })}
                   placeholder="contact@solidarpay.com"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="contact_phone">Numéro de téléphone</Label>
+                <Input
+                  id="contact_phone"
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel"
+                  value={settings.contactPhone}
+                  onChange={(e) => setSettings({ ...settings, contactPhone: e.target.value })}
+                  placeholder="+33 6 12 34 56 78"
                 />
               </div>
               <Button onClick={handleSave} disabled={saving}>
