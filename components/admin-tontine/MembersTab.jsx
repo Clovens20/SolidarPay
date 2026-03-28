@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -36,10 +36,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Search, CheckCircle, Clock, XCircle, MoreVertical, Eye, UserMinus, User, FileText, Landmark } from 'lucide-react'
+import { Search, MoreVertical, UserMinus, User, Landmark } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import AddMemberModal from './AddMemberModal'
-import KYCDocumentModal from './KYCDocumentModal'
 import { getCurrencyInfo } from '@/lib/currency-utils'
 import {
   receiverFieldModeForCountry,
@@ -47,6 +46,15 @@ import {
   isDirectPerMemberStorage,
   parseReceiverStorage,
 } from '@/lib/tontine-receiver'
+
+/** Évite les doublons (tontineId, userId) si les UUID ne sont pas typés pareil côté client. */
+function normalizeUserId(id) {
+  return String(id || '')
+    .trim()
+    .toLowerCase()
+}
+
+const ROTATION_SHIFT_OFFSET = 100000
 
 export default function MembersTab({
   tontineId,
@@ -56,17 +64,19 @@ export default function MembersTab({
   currency,
   kohoReceiverEmail,
   adminId,
+  maxMembers: maxMembersProp,
 }) {
   const [selectedCountry, setSelectedCountry] = useState('all') // 'all' pour permettre tontines inter-pays
   const [searchTerm, setSearchTerm] = useState('')
-  const [searchResults, setSearchResults] = useState([])
+  const [candidateUsers, setCandidateUsers] = useState([])
+  const [loadingCandidates, setLoadingCandidates] = useState(false)
+  const skipAutoCountryRef = useRef(false)
   const [members, setMembers] = useState([])
   const [countries, setCountries] = useState([])
   const [loadingCountries, setLoadingCountries] = useState(true)
   const [loading, setLoading] = useState(false)
-  const [searching, setSearching] = useState(false)
+  const [adminProfileReady, setAdminProfileReady] = useState(false)
   const [addMemberModal, setAddMemberModal] = useState(null)
-  const [kycModal, setKycModal] = useState(null)
   const [removeMemberId, setRemoveMemberId] = useState(null)
   const [removeMemberInfo, setRemoveMemberInfo] = useState(null)
   const [hasActiveCycles, setHasActiveCycles] = useState(false)
@@ -82,7 +92,14 @@ export default function MembersTab({
   const [savingReceiver, setSavingReceiver] = useState(false)
   const [joinRequests, setJoinRequests] = useState([])
   const [joinRequestActionId, setJoinRequestActionId] = useState(null)
+  const [joinRequestToAccept, setJoinRequestToAccept] = useState(null)
+  const [joinRotationPosition, setJoinRotationPosition] = useState(1)
+  const [addMemberRotationPosition, setAddMemberRotationPosition] = useState(1)
+  const [memberActionLoading, setMemberActionLoading] = useState(false)
   const { toast } = useToast()
+
+  const maxMembers =
+    maxMembersProp != null && Number(maxMembersProp) >= 1 ? Number(maxMembersProp) : null
 
   const showDirectPerMember =
     paymentMode === 'direct' && isDirectPerMemberStorage(kohoReceiverEmail)
@@ -98,12 +115,87 @@ export default function MembersTab({
   }, [tontineId])
 
   useEffect(() => {
-    if (!adminId) return
+    if (!adminId) {
+      setAdminCountry(null)
+      setAdminProfileReady(true)
+      return
+    }
+    setAdminProfileReady(false)
+    let cancelled = false
     ;(async () => {
       const { data } = await supabase.from('users').select('country').eq('id', adminId).maybeSingle()
-      setAdminCountry(data?.country || null)
+      if (cancelled) return
+      const c = data?.country || null
+      setAdminCountry(c)
+      if (c && !skipAutoCountryRef.current) {
+        setSelectedCountry(c)
+      }
+      setAdminProfileReady(true)
     })()
+    return () => {
+      cancelled = true
+    }
   }, [adminId])
+
+  const existingMemberIds = useMemo(
+    () => new Set(members.map((m) => normalizeUserId(m.userId))),
+    [members]
+  )
+
+  const filteredCandidates = useMemo(() => {
+    const t = searchTerm.trim().toLowerCase()
+    let list = candidateUsers
+    if (t) {
+      list = list.filter(
+        (u) =>
+          (u.fullName && u.fullName.toLowerCase().includes(t)) ||
+          (u.email && u.email.toLowerCase().includes(t))
+      )
+    }
+    return list.map((u) => ({
+      ...u,
+      isAlreadyMember: existingMemberIds.has(normalizeUserId(u.id)),
+    }))
+  }, [candidateUsers, searchTerm, existingMemberIds])
+
+  const loadCandidates = useCallback(async () => {
+    if (!tontineId || !adminProfileReady) return
+    setLoadingCandidates(true)
+    try {
+      let q = supabase
+        .from('users')
+        .select('id, email, fullName, phone, country, role')
+        .eq('role', 'member')
+
+      if (adminId) {
+        q = q.neq('id', adminId)
+      }
+
+      if (selectedCountry && selectedCountry !== 'all') {
+        q = q.eq('country', selectedCountry)
+      }
+
+      const { data: users, error } = await q.order('fullName', { ascending: true }).limit(400)
+
+      if (error) throw error
+
+      setCandidateUsers(users || [])
+    } catch (error) {
+      console.error('loadCandidates:', error)
+      toast({
+        title: 'Erreur',
+        description: error.message || 'Impossible de charger la liste des membres',
+        variant: 'destructive',
+      })
+      setCandidateUsers([])
+    } finally {
+      setLoadingCandidates(false)
+    }
+  }, [tontineId, selectedCountry, adminId, adminProfileReady, toast])
+
+  useEffect(() => {
+    void loadCandidates()
+  }, [loadCandidates])
 
   const checkActiveCycles = async () => {
     try {
@@ -182,29 +274,11 @@ export default function MembersTab({
           )
         `)
         .eq('tontineId', tontineId)
-        .order('joinedAt', { ascending: false })
+        .order('rotationOrder', { ascending: true })
 
       if (error) throw error
 
-      // Load KYC status for each member
-      const membersWithKYC = await Promise.all(
-        (data || []).map(async (member) => {
-          const { data: kyc } = await supabase
-            .from('kyc_documents')
-            .select('*')
-            .eq('userId', member.user.id)
-            .order('createdAt', { ascending: false })
-            .limit(1)
-            .single()
-
-          return {
-            ...member,
-            kyc: kyc || null
-          }
-        })
-      )
-
-      setMembers(membersWithKYC)
+      setMembers(data || [])
     } catch (error) {
       console.error('Error loading members:', error)
       toast({
@@ -248,25 +322,114 @@ export default function MembersTab({
     }
   }
 
-  const acceptJoinRequest = async (req) => {
-    setJoinRequestActionId(req.id)
-    try {
-      const { data: existingMembers } = await supabase
+  /** Insère un membre à un rang (1 = première réception), sans violer l’unicité sur rotationOrder. */
+  const insertMemberAtRotationPosition = async (userId, desiredPosition) => {
+    const uidNorm = normalizeUserId(userId)
+
+    const { data: dupRow, error: dupErr } = await supabase
+      .from('tontine_members')
+      .select('id')
+      .eq('tontineId', tontineId)
+      .eq('userId', userId)
+      .maybeSingle()
+    if (dupErr) throw dupErr
+    if (dupRow) {
+      throw new Error('Ce membre fait déjà partie de la tontine.')
+    }
+
+    if (maxMembers != null) {
+      const { count, error: cErr } = await supabase
         .from('tontine_members')
-        .select('rotationOrder')
+        .select('*', { count: 'exact', head: true })
         .eq('tontineId', tontineId)
-        .order('rotationOrder', { ascending: false })
-        .limit(1)
+      if (cErr) throw cErr
+      if ((count || 0) >= maxMembers) {
+        throw new Error(
+          `La tontine est complète : ${maxMembers} membre(s) maximum. Augmentez la limite dans la vue d’ensemble.`
+        )
+      }
+    }
 
-      const nextOrder =
-        existingMembers && existingMembers.length > 0 ? existingMembers[0].rotationOrder + 1 : 1
+    const { data: rows, error: fetchErr } = await supabase
+      .from('tontine_members')
+      .select('id, userId, rotationOrder')
+      .eq('tontineId', tontineId)
+      .order('rotationOrder', { ascending: true })
 
-      const { error: insErr } = await supabase.from('tontine_members').insert({
-        tontineId,
-        userId: req.userId,
-        rotationOrder: nextOrder,
+    if (fetchErr) throw fetchErr
+    const sorted = [...(rows || [])].sort((a, b) => a.rotationOrder - b.rotationOrder)
+    if (sorted.some((r) => normalizeUserId(r.userId) === uidNorm)) {
+      throw new Error('Ce membre fait déjà partie de la tontine.')
+    }
+
+    const n = sorted.length
+    const pos = Math.min(Math.max(1, Number(desiredPosition) || n + 1), n + 1)
+
+    for (const row of sorted) {
+      if (row.rotationOrder >= pos) {
+        const { error: upErr } = await supabase
+          .from('tontine_members')
+          .update({ rotationOrder: row.rotationOrder + ROTATION_SHIFT_OFFSET })
+          .eq('id', row.id)
+        if (upErr) {
+          if (upErr.code === '23505') {
+            throw new Error('Conflit sur l’ordre de rotation. Actualisez la page et réessayez.')
+          }
+          throw upErr
+        }
+      }
+    }
+
+    const { error: insErr } = await supabase.from('tontine_members').insert({
+      tontineId,
+      userId,
+      rotationOrder: pos,
+    })
+    if (insErr) {
+      if (insErr.code === '23505') {
+        const msg = String(insErr.message || '')
+        if (msg.includes('userId') || msg.includes('user_id')) {
+          throw new Error('Ce membre fait déjà partie de la tontine.')
+        }
+        if (msg.includes('rotationOrder') || msg.includes('rotation_order')) {
+          throw new Error('Ce rang est déjà pris. Actualisez et choisissez un autre rang.')
+        }
+      }
+      throw insErr
+    }
+
+    const { data: afterRows, error: afterErr } = await supabase
+      .from('tontine_members')
+      .select('id, rotationOrder')
+      .eq('tontineId', tontineId)
+    if (afterErr) throw afterErr
+    for (const row of afterRows || []) {
+      if (row.rotationOrder >= pos + ROTATION_SHIFT_OFFSET) {
+        const newOrder = row.rotationOrder - ROTATION_SHIFT_OFFSET + 1
+        const { error: normErr } = await supabase
+          .from('tontine_members')
+          .update({ rotationOrder: newOrder })
+          .eq('id', row.id)
+        if (normErr) throw normErr
+      }
+    }
+  }
+
+  const confirmAcceptJoinRequest = async () => {
+    const req = joinRequestToAccept
+    if (!req) return
+    if (maxMembers != null && members.length >= maxMembers) {
+      toast({
+        title: 'Tontine complète',
+        description: `Limite de ${maxMembers} membre(s) atteinte. Augmentez la capacité dans la vue d’ensemble.`,
+        variant: 'destructive',
       })
-      if (insErr) throw insErr
+      return
+    }
+    setJoinRequestActionId(req.id)
+    setMemberActionLoading(true)
+    try {
+      await insertMemberAtRotationPosition(req.userId, joinRotationPosition)
 
       const { error: updErr } = await supabase
         .from('tontine_join_requests')
@@ -276,8 +439,9 @@ export default function MembersTab({
 
       toast({
         title: 'Demande acceptée',
-        description: 'Le membre a été ajouté à la tontine.',
+        description: 'Le membre a été ajouté à la tontine avec le rang de rotation choisi.',
       })
+      setJoinRequestToAccept(null)
       loadJoinRequests()
       loadMembers()
     } catch (e) {
@@ -289,6 +453,7 @@ export default function MembersTab({
       })
     } finally {
       setJoinRequestActionId(null)
+      setMemberActionLoading(false)
     }
   }
 
@@ -313,120 +478,70 @@ export default function MembersTab({
     }
   }
 
-  const handleSearch = async () => {
-    if (!searchTerm.trim()) {
+  const handleAddMember = (user) => {
+    if (maxMembers != null && members.length >= maxMembers) {
       toast({
-        title: 'Recherche requise',
-        description: 'Veuillez entrer un nom ou email',
-        variant: 'destructive'
+        title: 'Tontine complète',
+        description: `Vous avez atteint la limite de ${maxMembers} membre(s). Modifiez la capacité dans la vue d’ensemble.`,
+        variant: 'destructive',
       })
       return
     }
-
-    try {
-      setSearching(true)
-      
-      // Search users by name or email
-      let query = supabase
-        .from('users')
-        .select('*')
-        .or(`fullName.ilike.%${searchTerm}%,email.ilike.%${searchTerm}%`)
-        .eq('role', 'member')
-
-      // Filter by country if selected (optionnel pour permettre tontines inter-pays)
-      if (selectedCountry && selectedCountry !== 'all') {
-        query = query.eq('country', selectedCountry)
-      }
-
-      const { data, error } = await query.limit(20)
-
-      if (error) throw error
-
-      // Check if users are already members
-      const { data: existingMembers } = await supabase
-        .from('tontine_members')
-        .select('userId')
-        .eq('tontineId', tontineId)
-
-      const existingMemberIds = (existingMembers || []).map(m => m.userId)
-
-      // Load KYC status for each result
-      const resultsWithKYC = await Promise.all(
-        (data || []).map(async (user) => {
-          const { data: kyc } = await supabase
-            .from('kyc_documents')
-            .select('*')
-            .eq('userId', user.id)
-            .order('createdAt', { ascending: false })
-            .limit(1)
-            .single()
-
-          return {
-            ...user,
-            kyc: kyc || null,
-            isAlreadyMember: existingMemberIds.includes(user.id)
-          }
-        })
-      )
-
-      setSearchResults(resultsWithKYC)
-    } catch (error) {
-      console.error('Error searching:', error)
+    if (existingMemberIds.has(normalizeUserId(user.id))) {
       toast({
-        title: 'Erreur de recherche',
-        description: error.message,
-        variant: 'destructive'
+        title: 'Déjà membre',
+        description: 'Cette personne fait déjà partie de la tontine.',
+        variant: 'destructive',
       })
-    } finally {
-      setSearching(false)
+      return
     }
-  }
-
-  const handleAddMember = (user) => {
+    setAddMemberRotationPosition(members.length + 1)
     setAddMemberModal(user)
   }
 
   const confirmAddMember = async () => {
-    if (!addMemberModal) return
+    if (!addMemberModal || memberActionLoading) return
 
+    if (maxMembers != null && members.length >= maxMembers) {
+      toast({
+        title: 'Tontine complète',
+        description: `Limite de ${maxMembers} membre(s) atteinte.`,
+        variant: 'destructive',
+      })
+      setAddMemberModal(null)
+      return
+    }
+    if (existingMemberIds.has(normalizeUserId(addMemberModal.id))) {
+      toast({
+        title: 'Déjà membre',
+        description: 'Cette personne fait déjà partie de la tontine.',
+        variant: 'destructive',
+      })
+      setAddMemberModal(null)
+      return
+    }
+
+    setMemberActionLoading(true)
     try {
-      // Get current max rotation order
-      const { data: existingMembers } = await supabase
-        .from('tontine_members')
-        .select('rotationOrder')
-        .eq('tontineId', tontineId)
-        .order('rotationOrder', { ascending: false })
-        .limit(1)
-
-      const nextOrder = existingMembers && existingMembers.length > 0
-        ? existingMembers[0].rotationOrder + 1
-        : 1
-
-      const { error } = await supabase
-        .from('tontine_members')
-        .insert({
-          tontineId,
-          userId: addMemberModal.id,
-          rotationOrder: nextOrder
-        })
-
-      if (error) throw error
+      await insertMemberAtRotationPosition(addMemberModal.id, addMemberRotationPosition)
 
       toast({
         title: 'Membre ajouté',
-        description: `${addMemberModal.fullName} a été ajouté à la tontine`
+        description: `${addMemberModal.fullName} a été ajouté à la tontine (tour n°${addMemberRotationPosition}).`,
       })
 
       setAddMemberModal(null)
-      setSearchResults([])
-      loadMembers()
+      await loadMembers()
+      void loadCandidates()
     } catch (error) {
       console.error('Error adding member:', error)
       toast({
         title: 'Erreur',
-        description: 'Impossible d\'ajouter le membre',
+        description: error.message || 'Impossible d\'ajouter le membre',
         variant: 'destructive'
       })
+    } finally {
+      setMemberActionLoading(false)
     }
   }
 
@@ -519,23 +634,6 @@ export default function MembersTab({
         description: error.message || 'Impossible de retirer le membre. Veuillez réessayer.',
         variant: 'destructive'
       })
-    }
-  }
-
-  const getKYCStatus = (kyc) => {
-    if (!kyc) {
-      return { status: 'none', label: 'Non vérifié', color: 'destructive', icon: XCircle }
-    }
-    
-    switch (kyc.status) {
-      case 'approved':
-        return { status: 'approved', label: 'Vérifié', color: 'default', icon: CheckCircle, className: 'bg-green-100 text-green-800' }
-      case 'pending':
-        return { status: 'pending', label: 'En attente', color: 'default', icon: Clock, className: 'bg-orange-100 text-orange-800' }
-      case 'rejected':
-        return { status: 'rejected', label: 'Rejeté', color: 'destructive', icon: XCircle }
-      default:
-        return { status: 'none', label: 'Non vérifié', color: 'destructive', icon: XCircle }
     }
   }
 
@@ -650,8 +748,11 @@ export default function MembersTab({
               Demandes pour rejoindre la tontine
             </CardTitle>
             <CardDescription>
-              Ces personnes ont demandé à participer. Acceptez pour les ajouter avec le prochain ordre de rotation,
-              ou refusez si la tontine est déjà complète.
+              Acceptez une demande pour ajouter le membre : vous choisirez son rang dans la rotation (qui reçoit en
+              premier, etc.).
+              {maxMembers != null
+                ? ` Limite : ${maxMembers} membre(s) (${members.length} actuellement).`
+                : null}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -687,10 +788,16 @@ export default function MembersTab({
                   <Button
                     size="sm"
                     className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
-                    disabled={joinRequestActionId !== null}
-                    onClick={() => acceptJoinRequest(req)}
+                    disabled={
+                      joinRequestActionId !== null ||
+                      (maxMembers != null && members.length >= maxMembers)
+                    }
+                    onClick={() => {
+                      setJoinRequestToAccept(req)
+                      setJoinRotationPosition(members.length + 1)
+                    }}
                   >
-                    {joinRequestActionId === req.id ? '…' : 'Accepter'}
+                    Accepter
                   </Button>
                 </div>
               </div>
@@ -702,9 +809,10 @@ export default function MembersTab({
       {/* Search Section */}
       <Card>
         <CardHeader>
-          <CardTitle>Rechercher des membres</CardTitle>
+          <CardTitle>Ajouter des membres</CardTitle>
           <CardDescription>
-            Recherchez des membres inscrits pour les ajouter à votre tontine. Vous pouvez créer des tontines inter-pays avec des membres de différents pays.
+            Par défaut, la liste affiche les comptes « membre » du <strong>même pays que vous</strong> (modifiable ci-dessous).
+            Utilisez le champ de recherche pour filtrer par nom ou e-mail. Vous pouvez aussi élargir à tous les pays.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -725,7 +833,10 @@ export default function MembersTab({
                       key={country.code || country.id}
                       variant={selectedCountry === country.code ? "default" : "outline"}
                       size="sm"
-                      onClick={() => setSelectedCountry(country.code)}
+                      onClick={() => {
+                        skipAutoCountryRef.current = true
+                        setSelectedCountry(country.code)
+                      }}
                       className={
                         selectedCountry === country.code
                           ? "bg-solidarpay-primary hover:bg-solidarpay-secondary"
@@ -744,11 +855,14 @@ export default function MembersTab({
               {/* Bouton "Tous les pays" à la fin */}
               <div className="flex justify-end">
                 <Button
-                  variant={selectedCountry === 'all' || !selectedCountry ? "default" : "outline"}
+                  variant={selectedCountry === 'all' ? "default" : "outline"}
                   size="sm"
-                  onClick={() => setSelectedCountry('all')}
+                  onClick={() => {
+                    skipAutoCountryRef.current = true
+                    setSelectedCountry('all')
+                  }}
                   className={
-                    selectedCountry === 'all' || !selectedCountry
+                    selectedCountry === 'all'
                       ? "bg-solidarpay-primary hover:bg-solidarpay-secondary"
                       : ""
                   }
@@ -758,51 +872,73 @@ export default function MembersTab({
               </div>
             </div>
             <p className="text-xs text-solidarpay-text/70">
-              {selectedCountry === 'all' || !selectedCountry
-                ? 'Vous pouvez créer une tontine avec des membres de différents pays'
-                : `Filtrage actif : ${countries.find(c => c.code === selectedCountry)?.name || selectedCountry}`}
+              {selectedCountry === 'all'
+                ? 'Liste élargie : tous les pays (jusqu’à 400 comptes). Précisez la recherche pour trouver quelqu’un.'
+                : `Pays affiché : ${countries.find((c) => c.code === selectedCountry)?.name || selectedCountry}`}
             </p>
           </div>
 
-          {/* Step 2: Search */}
+          {/* Filtre local + rechargement serveur */}
           <div className="space-y-2">
-            <Label htmlFor="search">Rechercher des membres</Label>
+            <Label htmlFor="search">Filtrer par nom ou e-mail</Label>
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-solidarpay-text/50 w-4 h-4" />
                 <Input
                   id="search"
-                  placeholder="Nom complet ou email"
+                  placeholder="Tapez pour réduire la liste affichée…"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      void loadCandidates()
+                    }
+                  }}
                   className="pl-10"
                 />
               </div>
               <Button
-                onClick={handleSearch}
-                disabled={!searchTerm.trim() || searching}
-                className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
+                type="button"
+                onClick={() => void loadCandidates()}
+                disabled={loadingCandidates || !adminProfileReady}
+                className="bg-solidarpay-primary hover:bg-solidarpay-secondary shrink-0"
               >
-                {searching ? 'Recherche...' : 'Rechercher'}
+                {loadingCandidates ? 'Chargement…' : 'Actualiser'}
               </Button>
             </div>
+            <p className="text-xs text-solidarpay-text/60">
+              Le filtre s’applique instantanément sur la liste chargée. « Actualiser » relit les données sur le serveur.
+            </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* Search Results */}
-      {searchResults.length > 0 && (
+      {/* Membres disponibles (pays sélectionné) */}
+      {adminProfileReady && (
         <Card>
           <CardHeader>
-            <CardTitle>Résultats de recherche</CardTitle>
-            <CardDescription>{searchResults.length} membre(s) trouvé(s)</CardDescription>
+            <CardTitle>Membres disponibles</CardTitle>
+            <CardDescription>
+              {loadingCandidates
+                ? 'Chargement…'
+                : `${filteredCandidates.length} affiché(s) sur ${candidateUsers.length} dans ce pays / ce filtre.`}
+            </CardDescription>
           </CardHeader>
           <CardContent>
+            {loadingCandidates && candidateUsers.length === 0 ? (
+              <div className="text-center py-10 text-solidarpay-text/60">Chargement de la liste…</div>
+            ) : !loadingCandidates && candidateUsers.length === 0 ? (
+              <div className="text-center py-10 text-solidarpay-text/70">
+                Aucun compte « membre » pour ce pays. Changez de pays ou vérifiez les inscriptions.
+              </div>
+            ) : filteredCandidates.length === 0 ? (
+              <div className="text-center py-10 text-solidarpay-text/70">
+                Aucun résultat pour « {searchTerm.trim()} ». Effacez le filtre ou changez de pays.
+              </div>
+            ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {searchResults.map((user) => {
-                const kycInfo = getKYCStatus(user.kyc)
-                const KYCIcon = kycInfo.icon
+              {filteredCandidates.map((user) => {
                 const canAdd = !user.isAlreadyMember
 
                 return (
@@ -831,12 +967,6 @@ export default function MembersTab({
                           </div>
                         )}
 
-                        {/* KYC Status */}
-                        <Badge className={kycInfo.className || ''} variant={kycInfo.color}>
-                          <KYCIcon className="w-3 h-3 mr-1" />
-                          {kycInfo.label}
-                        </Badge>
-
                         {/* Actions */}
                         {user.isAlreadyMember ? (
                           <Badge variant="secondary">Déjà membre</Badge>
@@ -859,6 +989,7 @@ export default function MembersTab({
                 )
               })}
             </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -883,7 +1014,12 @@ export default function MembersTab({
       <Card>
         <CardHeader>
           <CardTitle>Membres de la tontine</CardTitle>
-          <CardDescription>{members.length} membre(s) dans cette tontine</CardDescription>
+          <CardDescription>
+            {maxMembers != null
+              ? `${members.length} / ${maxMembers} membre(s)`
+              : `${members.length} membre(s)`}
+            {maxMembers != null && members.length >= maxMembers ? ' — capacité maximale atteinte' : ''}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -899,20 +1035,16 @@ export default function MembersTab({
               <TableHeader>
                 <TableRow>
                   <TableHead>Membre</TableHead>
+                  <TableHead>Tour</TableHead>
                   <TableHead>Email</TableHead>
                   {showDirectPerMember ? <TableHead>Réception cotisation</TableHead> : null}
                   <TableHead>Téléphone</TableHead>
-                  <TableHead>Statut KYC</TableHead>
-                  <TableHead>Document</TableHead>
                   <TableHead>Date d'ajout</TableHead>
                   <TableHead>Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {members.map((member) => {
-                  const kycInfo = getKYCStatus(member.kyc)
-                  const KYCIcon = kycInfo.icon
-
                   return (
                     <TableRow key={member.id}>
                       <TableCell>
@@ -923,31 +1055,21 @@ export default function MembersTab({
                           <span className="font-medium">{member.user?.fullName}</span>
                         </div>
                       </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="font-mono tabular-nums">
+                            {member.rotationOrder}
+                          </Badge>
+                          {member.rotationOrder === 1 ? (
+                            <span className="text-xs text-solidarpay-text/70">1re réception</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
                       <TableCell>{member.user?.email}</TableCell>
                       {showDirectPerMember ? (
                         <TableCell>{receiverStatusBadge(member)}</TableCell>
                       ) : null}
                       <TableCell>{member.user?.phone || '-'}</TableCell>
-                      <TableCell>
-                        <Badge className={kycInfo.className || ''} variant={kycInfo.color}>
-                          <KYCIcon className="w-3 h-3 mr-1" />
-                          {kycInfo.label}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {member.kyc && member.kyc.status === 'approved' ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setKycModal(member)}
-                          >
-                            <Eye className="w-4 h-4 mr-1" />
-                            Voir
-                          </Button>
-                        ) : (
-                          <span className="text-sm text-solidarpay-text/50">-</span>
-                        )}
-                      </TableCell>
                       <TableCell>
                         {new Date(member.joinedAt).toLocaleDateString('fr-FR')}
                       </TableCell>
@@ -965,10 +1087,6 @@ export default function MembersTab({
                                 Coordonnées de réception (cycle)
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem onClick={() => setKycModal(member)}>
-                              <FileText className="w-4 h-4 mr-2" />
-                              Voir le document KYC
-                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {
                                 // Vérifier si on peut retirer le membre
@@ -1022,18 +1140,66 @@ export default function MembersTab({
       <AddMemberModal
         user={addMemberModal}
         tontineName={tontineName}
+        rotationMax={Math.max(1, members.length + 1)}
+        rotationPosition={addMemberRotationPosition}
+        onRotationPositionChange={setAddMemberRotationPosition}
         onConfirm={confirmAddMember}
-        onCancel={() => setAddMemberModal(null)}
+        onCancel={() => !memberActionLoading && setAddMemberModal(null)}
+        isSubmitting={memberActionLoading}
+        maxMembers={maxMembers}
+        currentMemberCount={members.length}
       />
 
-      {/* KYC Document Modal */}
-      {kycModal && (
-        <KYCDocumentModal
-          member={kycModal}
-          tontineName={tontineName}
-          onClose={() => setKycModal(null)}
-        />
-      )}
+      <Dialog
+        open={!!joinRequestToAccept}
+        onOpenChange={(open) => {
+          if (!open) setJoinRequestToAccept(null)
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Accepter la demande</DialogTitle>
+            <DialogDescription>
+              Définissez le rang de <strong>{joinRequestToAccept?.requester?.fullName || 'le membre'}</strong> dans la
+              rotation (réception des cotisations).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Label htmlFor="join-rotation">Position dans la rotation</Label>
+            <Select
+              value={String(joinRotationPosition)}
+              onValueChange={(v) => setJoinRotationPosition(parseInt(v, 10))}
+            >
+              <SelectTrigger id="join-rotation">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Array.from({ length: members.length + 1 }, (_, i) => i + 1).map((p) => (
+                  <SelectItem key={p} value={String(p)}>
+                    {p === 1
+                      ? `Rang ${p} — première réception`
+                      : p === members.length + 1
+                        ? `Rang ${p} — en fin de liste`
+                        : `Rang ${p}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setJoinRequestToAccept(null)}>
+              Annuler
+            </Button>
+            <Button
+              className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
+              disabled={joinRequestActionId !== null || memberActionLoading}
+              onClick={() => confirmAcceptJoinRequest()}
+            >
+              {joinRequestActionId || memberActionLoading ? '…' : 'Confirmer l’ajout'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Coordonnées réception — paiement direct */}
       <Dialog open={!!receiverEditMember} onOpenChange={(o) => !o && setReceiverEditMember(null)}>

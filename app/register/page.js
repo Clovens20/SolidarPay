@@ -323,7 +323,7 @@ export default function RegisterPage() {
                   </li>
                   <li className="flex items-center gap-2">
                     <CheckCircle className="w-3 h-3 text-green-500" />
-                    Sécurité maximale avec vérification KYC
+                    Compte sécurisé et données protégées
                   </li>
                   <li className="flex items-center gap-2">
                     <CheckCircle className="w-3 h-3 text-green-500" />

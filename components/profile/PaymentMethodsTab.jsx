@@ -42,11 +42,10 @@ export default function PaymentMethodsTab({ user }) {
   })
 
   useEffect(() => {
-    if (user) {
-      loadPaymentMethods()
-      loadCountries()
-    }
-  }, [user])
+    if (!user?.id) return
+    loadPaymentMethods()
+    loadCountries()
+  }, [user?.id])
 
   const loadPaymentMethods = async () => {
     try {

@@ -7,24 +7,60 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, Save, User } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
+import { ArrowLeft, Save, User, Globe, CreditCard } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import PaymentMethodsTab from '@/components/profile/PaymentMethodsTab'
 
 export default function ProfilePage() {
   const router = useRouter()
   const { toast } = useToast()
   const [user, setUser] = useState(null)
+  const [countries, setCountries] = useState([])
+  const [loadingCountries, setLoadingCountries] = useState(true)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
-    phone: ''
+    phone: '',
+    country: '',
+    kohoEmail: '',
   })
 
   useEffect(() => {
+    loadCountries()
     loadProfile()
   }, [])
+
+  const loadCountries = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('payment_countries')
+        .select('code, name')
+        .eq('enabled', true)
+        .order('name', { ascending: true })
+
+      if (error) throw error
+      setCountries(data || [])
+    } catch (error) {
+      console.error('Error loading countries:', error)
+      toast({
+        title: 'Erreur',
+        description: 'Impossible de charger la liste des pays.',
+        variant: 'destructive',
+      })
+    } finally {
+      setLoadingCountries(false)
+    }
+  }
 
   const loadProfile = async () => {
     try {
@@ -42,7 +78,9 @@ export default function ProfilePage() {
       setFormData({
         fullName: data.fullName || '',
         email: data.email || '',
-        phone: data.phone || ''
+        phone: data.phone || '',
+        country: data.country || '',
+        kohoEmail: data.kohoEmail || '',
       })
     } catch (error) {
       console.error('Error loading profile:', error)
@@ -51,25 +89,90 @@ export default function ProfilePage() {
     }
   }
 
+  const getCountryFlag = (countryCode) => {
+    const flags = {
+      CA: '🇨🇦',
+      US: '🇺🇸',
+      FR: '🇫🇷',
+      BE: '🇧🇪',
+      CH: '🇨🇭',
+      MX: '🇲🇽',
+      CL: '🇨🇱',
+      HT: '🇭🇹',
+      SN: '🇸🇳',
+      CM: '🇨🇲',
+    }
+    return flags[countryCode] || '🌍'
+  }
+
   const handleSave = async () => {
     setSaving(true)
     try {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
+      if (!formData.country) {
+        toast({
+          title: 'Pays requis',
+          description: 'Sélectionnez votre pays de résidence.',
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+
+      const { data: countryRow, error: countryErr } = await supabase
+        .from('payment_countries')
+        .select('code, enabled')
+        .eq('code', formData.country)
+        .single()
+
+      if (countryErr || !countryRow?.enabled) {
+        toast({
+          title: 'Pays invalide',
+          description: 'Ce pays n’est pas disponible. Choisissez-en un autre.',
+          variant: 'destructive',
+        })
+        setSaving(false)
+        return
+      }
+
+      const kohoTrimmed = formData.kohoEmail?.trim() || null
+
       const { error } = await supabase
         .from('users')
         .update({
           fullName: formData.fullName,
-          phone: formData.phone
+          phone: formData.phone || null,
+          country: formData.country,
+          kohoEmail: kohoTrimmed,
         })
         .eq('id', session.user.id)
 
       if (error) throw error
 
+      const savedUserRaw = localStorage.getItem('solidarpay_user')
+      if (savedUserRaw) {
+        try {
+          const prev = JSON.parse(savedUserRaw)
+          localStorage.setItem(
+            'solidarpay_user',
+            JSON.stringify({
+              ...prev,
+              fullName: formData.fullName,
+              phone: formData.phone || null,
+              country: formData.country,
+              kohoEmail: kohoTrimmed,
+            })
+          )
+        } catch {
+          /* ignore */
+        }
+      }
+
       toast({
         title: 'Profil mis à jour',
-        description: 'Vos informations ont été sauvegardées'
+        description: 'Vos informations ont été sauvegardées.',
       })
 
       loadProfile()
@@ -77,8 +180,8 @@ export default function ProfilePage() {
       console.error('Error saving profile:', error)
       toast({
         title: 'Erreur',
-        description: 'Impossible de sauvegarder le profil',
-        variant: 'destructive'
+        description: 'Impossible de sauvegarder le profil.',
+        variant: 'destructive',
       })
     } finally {
       setSaving(false)
@@ -99,6 +202,7 @@ export default function ProfilePage() {
   return (
     <div className="space-y-6 max-w-2xl">
       <button
+        type="button"
         onClick={() => router.push('/admin-tontine')}
         className="text-sm text-solidarpay-text/70 hover:text-solidarpay-text flex items-center gap-2"
       >
@@ -108,7 +212,9 @@ export default function ProfilePage() {
 
       <div>
         <h1 className="text-3xl font-bold text-solidarpay-text">Mon profil</h1>
-        <p className="text-solidarpay-text/70 mt-1">Gérez vos informations personnelles</p>
+        <p className="text-solidarpay-text/70 mt-1">
+          Corrigez votre pays, vos coordonnées et vos moyens de réception des paiements si besoin.
+        </p>
       </div>
 
       <Card>
@@ -117,7 +223,7 @@ export default function ProfilePage() {
             <User className="w-5 h-5" />
             Informations personnelles
           </CardTitle>
-          <CardDescription>Modifiez vos informations de profil</CardDescription>
+          <CardDescription>Nom, pays, téléphone et email KOHO / Interac</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
@@ -130,7 +236,7 @@ export default function ProfilePage() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">Email (connexion)</Label>
             <Input
               id="email"
               type="email"
@@ -139,8 +245,31 @@ export default function ProfilePage() {
               className="bg-gray-50"
             />
             <p className="text-xs text-solidarpay-text/70">
-              L'email ne peut pas être modifié
+              L’email de connexion ne peut pas être modifié ici.
             </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2">
+              <Globe className="w-4 h-4" />
+              Pays de résidence *
+            </Label>
+            <Select
+              value={formData.country}
+              onValueChange={(value) => setFormData({ ...formData, country: value })}
+              disabled={loadingCountries}
+            >
+              <SelectTrigger id="country">
+                <SelectValue placeholder="Sélectionnez votre pays" />
+              </SelectTrigger>
+              <SelectContent>
+                {countries.map((c) => (
+                  <SelectItem key={c.code} value={c.code}>
+                    {getCountryFlag(c.code)} {c.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-2">
@@ -152,7 +281,23 @@ export default function ProfilePage() {
             />
           </div>
 
+          <div className="space-y-2">
+            <Label htmlFor="kohoEmail">Email KOHO / Interac e-Transfer</Label>
+            <Input
+              id="kohoEmail"
+              type="email"
+              placeholder="ex. votre.email@koho.ca"
+              value={formData.kohoEmail}
+              onChange={(e) => setFormData({ ...formData, kohoEmail: e.target.value })}
+            />
+            <p className="text-xs text-solidarpay-text/70">
+              Utilisé lorsque des membres vous envoient une cotisation par Interac (Canada). Laissez vide si non
+              applicable.
+            </p>
+          </div>
+
           <Button
+            type="button"
             onClick={handleSave}
             disabled={saving}
             className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
@@ -162,7 +307,22 @@ export default function ProfilePage() {
           </Button>
         </CardContent>
       </Card>
+
+      {user?.id && (
+        <>
+          <Separator className="my-8" />
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 text-solidarpay-text">
+              <CreditCard className="w-5 h-5" />
+              <h2 className="text-lg font-semibold">Méthodes de paiement détaillées</h2>
+            </div>
+            <p className="text-sm text-solidarpay-text/70">
+              RIB, compte RUT / transferencia, PayPal, etc. — même gestion que pour les membres.
+            </p>
+            <PaymentMethodsTab user={user} />
+          </div>
+        </>
+      )}
     </div>
   )
 }
-

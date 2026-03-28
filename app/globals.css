@@ -18,6 +18,8 @@ body {
     overflow-x: clip;
     overflow-wrap: break-word;
     word-break: break-word;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
 }
 
 /* Flex / grid : autoriser le rétrécissement pour que le texte ne passe pas par-dessus */

@@ -4,7 +4,6 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   LayoutDashboard,
-  ShieldCheck,
   Globe,
   Palette,
   Settings,
@@ -12,9 +11,9 @@ import {
   FileText,
   Home,
   AlignLeft,
-  FileCheck
+  FileCheck,
+  Users,
 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
 const menuItems = [
@@ -25,15 +24,15 @@ const menuItems = [
     badge: null
   },
   {
-    title: 'Vérifications KYC',
-    icon: ShieldCheck,
-    href: '/admin/kyc',
-    badge: 'kycPending'
-  },
-  {
     title: 'Pays & Méthodes',
     icon: Globe,
     href: '/admin/countries',
+    badge: null
+  },
+  {
+    title: 'Utilisateurs',
+    icon: Users,
+    href: '/admin/users',
     badge: null
   },
   {
@@ -80,7 +79,7 @@ const menuItems = [
   }
 ]
 
-export default function AdminSidebar({ pathname, kycPending, onNavigate }) {
+export default function AdminSidebar({ pathname, onNavigate }) {
   const isActive = (href) => {
     if (href === '/admin') {
       return pathname === '/admin'
@@ -99,7 +98,6 @@ export default function AdminSidebar({ pathname, kycPending, onNavigate }) {
       {menuItems.map((item) => {
         const Icon = item.icon
         const active = isActive(item.href)
-        const badgeCount = item.badge === 'kycPending' ? kycPending : null
 
         return (
           <Link
@@ -107,7 +105,7 @@ export default function AdminSidebar({ pathname, kycPending, onNavigate }) {
             href={item.href}
             onClick={handleClick}
             className={cn(
-              'flex items-center gap-3 px-4 py-3 rounded-lg transition-colors',
+              'flex min-h-[44px] touch-manipulation items-center gap-3 px-4 py-3 rounded-lg transition-colors',
               active
                 ? 'bg-solidarpay-primary text-white'
                 : 'text-solidarpay-text hover:bg-solidarpay-bg'
@@ -115,14 +113,6 @@ export default function AdminSidebar({ pathname, kycPending, onNavigate }) {
           >
             <Icon className={cn('w-5 h-5', active ? 'text-white' : 'text-solidarpay-primary')} />
             <span className="flex-1 font-medium">{item.title}</span>
-            {badgeCount !== null && badgeCount > 0 && (
-              <Badge 
-                variant={active ? 'secondary' : 'destructive'} 
-                className="ml-auto"
-              >
-                {badgeCount}
-              </Badge>
-            )}
           </Link>
         )
       })}

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { FileText, Info, AlertCircle, AlertTriangle, XCircle, Activity, Clock } from 'lucide-react'
+import { FileText, Info, AlertCircle, XCircle, Activity } from 'lucide-react'
 import SystemLogsStats from '@/components/admin/SystemLogsStats'
 import SystemLogsFilters from '@/components/admin/SystemLogsFilters'
 import SystemLogsTable from '@/components/admin/SystemLogsTable'
@@ -48,9 +48,8 @@ export default function SystemLogsPage() {
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
     criticalErrors24h: 0,
-    kycProcessedToday: 0,
     systemChangesWeek: 0,
-    uptime: '99.9%'
+    logHealthPercent7d: null,
   })
   const [alerts, setAlerts] = useState([])
   const [filters, setFilters] = useState({
@@ -108,16 +107,14 @@ export default function SystemLogsPage() {
       const yesterday = new Date()
       yesterday.setHours(yesterday.getHours() - 24)
       
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      
       const weekAgo = new Date()
       weekAgo.setDate(weekAgo.getDate() - 7)
 
       const [
         { count: criticalErrors, error: criticalError },
-        { count: kycProcessed, error: kycError },
-        { count: systemChanges, error: systemError }
+        { count: systemChanges, error: systemError },
+        { count: totalLogs7d, error: totalErr },
+        { count: badLogs7d, error: badErr },
       ] = await Promise.all([
         supabase
           .from('system_logs')
@@ -127,35 +124,45 @@ export default function SystemLogsPage() {
         supabase
           .from('system_logs')
           .select('*', { count: 'exact', head: true })
-          .in('category', ['kyc_approved', 'kyc_rejected', 'kyc_requested'])
-          .gte('createdAt', today.toISOString()),
+          .eq('level', 'info')
+          .like('category', 'system_%')
+          .gte('createdAt', weekAgo.toISOString()),
         supabase
           .from('system_logs')
           .select('*', { count: 'exact', head: true })
-          .eq('level', 'info')
-          .like('category', 'system_%')
-          .gte('createdAt', weekAgo.toISOString())
+          .gte('createdAt', weekAgo.toISOString()),
+        supabase
+          .from('system_logs')
+          .select('*', { count: 'exact', head: true })
+          .in('level', ['error', 'critical'])
+          .gte('createdAt', weekAgo.toISOString()),
       ])
 
-      // Log errors but don't throw
       if (criticalError) console.error('Error loading critical errors:', criticalError)
-      if (kycError) console.error('Error loading KYC stats:', kycError)
       if (systemError) console.error('Error loading system changes:', systemError)
+      if (totalErr || badErr) console.error('Error loading log health:', totalErr || badErr)
+
+      const total7 = totalLogs7d || 0
+      const bad7 = badLogs7d || 0
+      const logHealthPercent7d =
+        !totalErr && !badErr && total7 > 0
+          ? Math.round(((total7 - bad7) / total7) * 1000) / 10
+          : !totalErr && total7 === 0
+            ? 100
+            : null
 
       setStats({
         criticalErrors24h: criticalErrors || 0,
-        kycProcessedToday: kycProcessed || 0,
         systemChangesWeek: systemChanges || 0,
-        uptime: '99.9%' // Mock - in production, calculate from monitoring
+        logHealthPercent7d,
       })
     } catch (error) {
       console.error('Error loading stats:', error)
       // Set default stats on error
       setStats({
         criticalErrors24h: 0,
-        kycProcessedToday: 0,
         systemChangesWeek: 0,
-        uptime: '99.9%'
+        logHealthPercent7d: null,
       })
     }
   }, [])
@@ -184,31 +191,6 @@ export default function SystemLogsPage() {
         })
       }
 
-      // Check KYC pending
-      const { count: kycPending, error: kycError } = await supabase
-        .from('kyc_documents')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'pending_review')
-
-      if (!kycError && kycPending >= 10) {
-        alertsList.push({
-          type: 'warning',
-          title: '10+ documents KYC en attente',
-          description: `${kycPending} documents nécessitent votre attention`,
-          icon: AlertTriangle
-        })
-      }
-
-      // Check site performance (mock)
-      const avgResponseTime = 2.5 // Mock - in production, get from monitoring
-      if (avgResponseTime > 3) {
-        alertsList.push({
-          type: 'warning',
-          title: 'Site lent',
-          description: `Temps de réponse moyen: ${avgResponseTime}s (seuil: 3s)`,
-          icon: Clock
-        })
-      }
     } catch (error) {
       console.error('Error checking alerts:', error)
     }
@@ -220,14 +202,11 @@ export default function SystemLogsPage() {
     let mounted = true
 
     const initializeLogs = async () => {
-      if (mounted) {
-        await loadLogsMemo()
-        await loadStatsMemo()
-        await checkAlertsMemo()
-      }
+      if (!mounted) return
+      await Promise.all([loadLogsMemo(), loadStatsMemo(), checkAlertsMemo()])
     }
 
-    initializeLogs()
+    void initializeLogs()
 
     // Auto-refresh every 60 seconds (reduced from 30)
     const interval = setInterval(() => {

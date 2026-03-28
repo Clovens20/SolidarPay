@@ -3,14 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { 
-  Settings, 
-  LogOut, 
-  User, 
-  ShieldCheck,
-  Bell,
-  Menu
-} from 'lucide-react'
+import { Settings, LogOut, Bell, Menu } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useIsMobile } from '@/hooks/use-mobile'
 import {
@@ -21,9 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Badge } from '@/components/ui/badge'
-
-export default function AdminHeader({ user, kycPending, onMenuClick }) {
+export default function AdminHeader({ user, onMenuClick }) {
   const router = useRouter()
   const [notifications, setNotifications] = useState([])
   const isMobile = useIsMobile()
@@ -67,26 +58,14 @@ export default function AdminHeader({ user, kycPending, onMenuClick }) {
               SolidarPay
             </span>
           </div>
-          <div className="hidden md:block h-6 w-px shrink-0 bg-solidarpay-border" />
-          <span className="hidden lg:block shrink-0 text-sm text-solidarpay-text/70">
-            Super Admin - Gestion Technique
+          <div className="hidden sm:block h-6 w-px shrink-0 bg-solidarpay-border" />
+          <span className="hidden min-w-0 max-w-[140px] truncate sm:max-w-[200px] sm:inline md:max-w-none md:whitespace-normal shrink-0 text-xs text-solidarpay-text/70 sm:text-sm">
+            Super Admin
           </span>
         </div>
 
         {/* Right side */}
         <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-2 md:gap-4">
-          {/* KYC Badge */}
-          {kycPending > 0 && (
-            <Badge 
-              variant="destructive" 
-              className="hidden sm:flex items-center gap-1 px-2 md:px-3 py-1 text-xs md:text-sm"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span className="hidden md:inline">{kycPending} vérifications KYC en attente</span>
-              <span className="md:hidden">{kycPending}</span>
-            </Badge>
-          )}
-
           {/* Bouton de déconnexion visible - PLACÉ AVANT LE PROFIL */}
           <Button
             variant="outline"

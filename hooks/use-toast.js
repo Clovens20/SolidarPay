@@ -135,6 +135,8 @@ function toast({
 function useToast() {
   const [state, setState] = React.useState(memoryState)
 
+  // Souscription unique au montage : si [state] change à chaque toast, l’effet
+  // se réexécutait en boucle et retirait/rajoutait le listener en permanence.
   React.useEffect(() => {
     listeners.push(setState)
     return () => {
@@ -142,8 +144,8 @@ function useToast() {
       if (index > -1) {
         listeners.splice(index, 1)
       }
-    };
-  }, [state])
+    }
+  }, [])
 
   return {
     ...state,

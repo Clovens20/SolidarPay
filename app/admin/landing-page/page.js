@@ -9,10 +9,10 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import { Save, Eye, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
-import { systemLogger } from '@/lib/system-logger'
+import { logCustomizationChange } from '@/lib/system-logger'
 
 const SECTIONS = [
   { id: 'hero', name: 'Hero Section', icon: '🎯' },
@@ -25,7 +25,6 @@ const SECTIONS = [
 ]
 
 export default function LandingPageEditor() {
-  const { toast } = useToast()
   const [sections, setSections] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -66,7 +65,7 @@ export default function LandingPageEditor() {
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [])
 
   useEffect(() => {
     loadSections()
@@ -116,10 +115,7 @@ export default function LandingPageEditor() {
 
       if (error) throw error
 
-      await systemLogger.log('landing_page_updated', {
-        section: sectionId,
-        action: 'Section mise à jour'
-      })
+      await logCustomizationChange(`landing_page/${sectionId}`, { section: sectionId })
 
       toast({
         title: 'Sauvegardé !',

@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/cotisation-reminders",
+      "schedule": "0 * * * *"
+    }
+  ]
+}

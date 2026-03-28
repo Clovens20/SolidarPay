@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -10,35 +11,70 @@ import {
   UserCheck,
   Shield,
   PiggyBank,
-  ShieldCheck,
-  FileCheck,
   Globe,
   CreditCard,
-  TrendingUp,
   AlertCircle,
   CheckCircle,
   Wrench,
   Clock,
-  Activity
+  Activity,
 } from 'lucide-react'
-import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts'
 import { useIsMobile } from '@/hooks/use-mobile'
 
-const COLORS = ['#0891B2', '#0E7490', '#06B6D4', '#14B8A6', '#10B981']
+const AdminDashboardCharts = dynamic(
+  () => import('@/components/admin/AdminDashboardCharts'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
+        {[1, 2, 3].map((i) => (
+          <Card key={i} className="min-w-0 overflow-hidden">
+            <CardContent className="p-6">
+              <div className="h-[240px] w-full animate-pulse rounded-lg bg-solidarpay-border/40 sm:h-[300px]" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    ),
+  }
+)
+
+function countPaymentMethodsFromCountries(rows) {
+  if (!rows?.length) return 0
+  return rows.reduce((acc, row) => {
+    const pm = row.paymentMethods
+    return acc + (Array.isArray(pm) ? pm.length : 0)
+  }, 0)
+}
+
+function parseMaintenanceMode(value) {
+  if (value === true || value === 'true') return true
+  if (value === false || value === 'false') return false
+  if (value && typeof value === 'object' && 'enabled' in value) return Boolean(value.enabled)
+  return false
+}
+
+function buildGeographyData(userRows, nameByCode) {
+  const counts = new Map()
+  for (const row of userRows || []) {
+    const code = row.country?.trim()
+    if (!code) continue
+    counts.set(code, (counts.get(code) || 0) + 1)
+  }
+  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1])
+  const top = 5
+  const head = sorted.slice(0, top)
+  const tail = sorted.slice(top)
+  const otherSum = tail.reduce((s, [, n]) => s + n, 0)
+  const out = head.map(([code, users]) => ({
+    country: nameByCode[code] || code,
+    users,
+  }))
+  if (otherSum > 0) {
+    out.push({ country: 'Autres', users: otherSum })
+  }
+  return out
+}
 
 export default function AdminDashboard() {
   const isMobile = useIsMobile()
@@ -47,331 +83,277 @@ export default function AdminDashboard() {
     totalMembers: 0,
     totalAdmins: 0,
     totalTontines: 0,
-    kycPending: 0,
-    kycApprovedToday: 0,
     activeCountries: 0,
-    paymentMethods: 0
+    paymentMethods: 0,
   })
   const [charts, setCharts] = useState({
     registrations: [],
     tontinesCreated: [],
-    kycStats: [],
-    geography: []
+    geography: [],
   })
   const [alerts, setAlerts] = useState([])
   const [timeline, setTimeline] = useState([])
   const [loading, setLoading] = useState(true)
   const [secondaryLoading, setSecondaryLoading] = useState(true)
 
-  // Load all stats in parallel
   const loadStats = useCallback(async () => {
-    try {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
+    const { data: countriesRows, error: countriesError } = await supabase
+      .from('payment_countries')
+      .select('code, name, paymentMethods')
+      .eq('enabled', true)
 
-      // Parallelize all count queries
-      const [
-        { count: totalUsers },
-        { count: totalMembers },
-        { count: totalAdmins },
-        { count: totalTontines },
-        { count: kycPending },
-        { count: kycApprovedToday },
-        { data: countriesData },
-        { count: paymentMethodsCount }
-      ] = await Promise.all([
-        supabase.from('users').select('*', { count: 'exact', head: true }),
-        supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'member'),
-        supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'admin'),
-        supabase.from('tontines').select('*', { count: 'exact', head: true }),
-        supabase.from('kyc_documents').select('*', { count: 'exact', head: true }).in('status', ['pending', 'pending_review', 'en_attente']),
-        supabase.from('kyc_documents').select('*', { count: 'exact', head: true }).eq('status', 'approved').gte('reviewedAt', today.toISOString()),
-        supabase.from('payment_countries').select('*', { count: 'exact' }).eq('enabled', true),
-        supabase.from('payment_countries').select('paymentMethods', { count: 'exact', head: true }).not('paymentMethods', 'is', null)
-      ])
+    if (countriesError) console.error('payment_countries:', countriesError)
 
-      const activeCountries = countriesData?.length || 0
+    const activeList = countriesRows || []
+    const activeCountries = activeList.length
+    const paymentMethods = countPaymentMethodsFromCountries(activeList)
 
-      setStats({
-        totalUsers: totalUsers || 0,
-        totalMembers: totalMembers || 0,
-        totalAdmins: totalAdmins || 0,
-        totalTontines: totalTontines || 0,
-        kycPending: kycPending || 0,
-        kycApprovedToday: kycApprovedToday || 0,
-        activeCountries,
-        paymentMethods: paymentMethodsCount || 0
-      })
+    const [
+      { count: totalUsers },
+      { count: totalMembers },
+      { count: totalAdmins },
+      { count: totalTontines },
+    ] = await Promise.all([
+      supabase.from('users').select('*', { count: 'exact', head: true }),
+      supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'member'),
+      supabase.from('users').select('*', { count: 'exact', head: true }).eq('role', 'admin'),
+      supabase.from('tontines').select('*', { count: 'exact', head: true }),
+    ])
 
-      return { kycPending: kycPending || 0 }
-    } catch (error) {
-      console.error('Error loading stats:', error)
-      return { kycPending: 0 }
+    setStats({
+      totalUsers: totalUsers || 0,
+      totalMembers: totalMembers || 0,
+      totalAdmins: totalAdmins || 0,
+      totalTontines: totalTontines || 0,
+      activeCountries,
+      paymentMethods,
+    })
+
+    return {
+      nameByCode: Object.fromEntries(activeList.map((c) => [c.code, c.name])),
     }
   }, [])
 
-  // Optimized charts loading - reduce queries
-  const loadCharts = useCallback(async () => {
-    try {
-      // Reduce to 3 months instead of 6
-      const months = []
-      for (let i = 2; i >= 0; i--) {
-        const date = new Date()
-        date.setMonth(date.getMonth() - i)
-        months.push(date.toISOString().slice(0, 7))
-      }
+  const loadCharts = useCallback(async (nameByCode) => {
+    const months = []
+    for (let i = 2; i >= 0; i--) {
+      const date = new Date()
+      date.setMonth(date.getMonth() - i)
+      months.push(date.toISOString().slice(0, 7))
+    }
 
-      // Parallelize month queries
-      const [registrationsData, tontinesData] = await Promise.all([
-        Promise.all(
-          months.map(async (month) => {
-            const start = `${month}-01`
-            const endDate = new Date(month + '-01')
-            endDate.setMonth(endDate.getMonth() + 1)
-            const end = endDate.toISOString().slice(0, 10)
+    const monthRange = (month) => {
+      const start = `${month}-01`
+      const endDate = new Date(month + '-01')
+      endDate.setMonth(endDate.getMonth() + 1)
+      const end = endDate.toISOString().slice(0, 10)
+      return { start, end }
+    }
 
-            const { count } = await supabase
-              .from('users')
-              .select('*', { count: 'exact', head: true })
-              .gte('createdAt', start)
-              .lt('createdAt', end)
-
-            return {
-              month: new Date(month + '-01').toLocaleDateString('fr-FR', { month: 'short' }),
-              count: count || 0
-            }
-          })
-        ),
-        Promise.all(
-          months.map(async (month) => {
-            const start = `${month}-01`
-            const endDate = new Date(month + '-01')
-            endDate.setMonth(endDate.getMonth() + 1)
-            const end = endDate.toISOString().slice(0, 10)
-
-            const { count } = await supabase
-              .from('tontines')
-              .select('*', { count: 'exact', head: true })
-              .gte('createdAt', start)
-              .lt('createdAt', end)
-
-            return {
-              month: new Date(month + '-01').toLocaleDateString('fr-FR', { month: 'short' }),
-              count: count || 0
-            }
-          })
-        )
-      ])
-
-      // Reduce to 2 weeks instead of 4
-      const weeks = []
-      for (let i = 1; i >= 0; i--) {
-        const date = new Date()
-        date.setDate(date.getDate() - i * 7)
-        weeks.push(date.toISOString().slice(0, 10))
-      }
-
-      const kycStats = await Promise.all(
-        weeks.map(async (weekStart) => {
-          const weekEnd = new Date(weekStart)
-          weekEnd.setDate(weekEnd.getDate() + 7)
-
-          const [approvedResult, rejectedResult] = await Promise.all([
-            supabase
-              .from('kyc_documents')
-              .select('*', { count: 'exact', head: true })
-              .eq('status', 'approved')
-              .gte('reviewedAt', weekStart)
-              .lt('reviewedAt', weekEnd.toISOString()),
-            supabase
-              .from('kyc_documents')
-              .select('*', { count: 'exact', head: true })
-              .eq('status', 'rejected')
-              .gte('reviewedAt', weekStart)
-              .lt('reviewedAt', weekEnd.toISOString())
-          ])
-
+    const [registrationsData, tontinesData, geoResult] = await Promise.all([
+      Promise.all(
+        months.map(async (month) => {
+          const { start, end } = monthRange(month)
+          const { count } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .gte('createdAt', start)
+            .lt('createdAt', end)
           return {
-            week: new Date(weekStart).toLocaleDateString('fr-FR', { month: 'short', day: 'numeric' }),
-            approved: approvedResult.count || 0,
-            rejected: rejectedResult.count || 0
+            month: new Date(month + '-01').toLocaleDateString('fr-FR', { month: 'short' }),
+            count: count || 0,
           }
         })
-      )
+      ),
+      Promise.all(
+        months.map(async (month) => {
+          const { start, end } = monthRange(month)
+          const { count } = await supabase
+            .from('tontines')
+            .select('*', { count: 'exact', head: true })
+            .gte('createdAt', start)
+            .lt('createdAt', end)
+          return {
+            month: new Date(month + '-01').toLocaleDateString('fr-FR', { month: 'short' }),
+            count: count || 0,
+          }
+        })
+      ),
+      supabase.from('users').select('country').not('country', 'is', null),
+    ])
 
-      // Mock geography for now (could be optimized later)
-      const geography = [
-        { country: 'Canada', users: 45 },
-        { country: 'France', users: 32 },
-        { country: 'Belgique', users: 18 },
-        { country: 'Suisse', users: 12 },
-        { country: 'Autres', users: 8 }
-      ]
+    if (geoResult.error) console.error('Géographie dashboard:', geoResult.error)
+    const geography = buildGeographyData(geoResult.data, nameByCode || {})
 
-      setCharts({
-        registrations: registrationsData,
-        tontinesCreated: tontinesData,
-        kycStats,
-        geography
-      })
-    } catch (error) {
-      console.error('Error loading charts:', error)
-    }
+    setCharts({
+      registrations: registrationsData,
+      tontinesCreated: tontinesData,
+      geography,
+    })
   }, [])
 
-  const loadAlerts = useCallback((kycPending) => {
-    const alertsList = []
+  const loadTimeline = useCallback(async () => {
+    const yesterday = new Date()
+    yesterday.setDate(yesterday.getDate() - 1)
 
-    if (kycPending > 0) {
-      alertsList.push({
-        type: 'warning',
-        icon: ShieldCheck,
-        title: `${kycPending} documents KYC à vérifier`,
-        description: 'Des documents nécessitent votre attention'
-      })
+    const [regRes, tonRes, logRes] = await Promise.all([
+      supabase
+        .from('users')
+        .select('*', { count: 'exact', head: true })
+        .gte('createdAt', yesterday.toISOString()),
+      supabase
+        .from('tontines')
+        .select('*', { count: 'exact', head: true })
+        .gte('createdAt', yesterday.toISOString()),
+      supabase
+        .from('system_logs')
+        .select('*', { count: 'exact', head: true })
+        .in('level', ['error', 'critical'])
+        .gte('createdAt', yesterday.toISOString()),
+    ])
+
+    if (logRes.error && logRes.error.code !== '42P01') {
+      console.warn('Timeline system_logs:', logRes.error)
     }
 
+    const systemErrors = logRes.error ? 0 : logRes.count || 0
+
+    setTimeline([
+      { type: 'user', label: 'Nouvelles inscriptions', count: regRes.count || 0 },
+      { type: 'tontine', label: 'Nouvelles tontines créées', count: tonRes.count || 0 },
+      { type: 'error', label: 'Entrées erreur / critique (logs)', count: systemErrors },
+    ])
+  }, [])
+
+  const applyAlerts = useCallback((maintenanceValue, refreshedAt) => {
+    const alertsList = []
+    const maintenanceOn = parseMaintenanceMode(maintenanceValue)
+
     alertsList.push({
-      type: 'success',
-      icon: CheckCircle,
-      title: 'Dernière sauvegarde',
-      description: new Date().toLocaleDateString('fr-FR', {
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      })
+      type: maintenanceOn ? 'warning' : 'success',
+      icon: maintenanceOn ? Wrench : CheckCircle,
+      title: 'Mode maintenance',
+      description: maintenanceOn
+        ? 'Activé (clé maintenance_mode). Voir la page Maintenance.'
+        : 'Désactivé — configuration plateforme.',
     })
 
     alertsList.push({
       type: 'info',
-      icon: Wrench,
-      title: 'Mode maintenance',
-      description: 'Inactif'
+      icon: Clock,
+      title: 'Actualisation des indicateurs',
+      description: `Données lues en base à ${refreshedAt.toLocaleString('fr-FR', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })}.`,
     })
 
     setAlerts(alertsList)
   }, [])
 
-  const loadTimeline = useCallback(async () => {
-    try {
-      const yesterday = new Date()
-      yesterday.setDate(yesterday.getDate() - 1)
-
-      // Parallelize timeline queries
-      const [
-        { count: newRegistrations },
-        { count: newTontines },
-        { count: kycSubmitted }
-      ] = await Promise.all([
-        supabase.from('users').select('*', { count: 'exact', head: true }).gte('createdAt', yesterday.toISOString()),
-        supabase.from('tontines').select('*', { count: 'exact', head: true }).gte('createdAt', yesterday.toISOString()),
-        supabase.from('kyc_documents').select('*', { count: 'exact', head: true }).gte('submittedAt', yesterday.toISOString())
-      ])
-
-      setTimeline([
-        { type: 'user', label: 'Nouvelles inscriptions', count: newRegistrations || 0 },
-        { type: 'tontine', label: 'Nouvelles tontines créées', count: newTontines || 0 },
-        { type: 'kyc', label: 'Documents KYC soumis', count: kycSubmitted || 0 },
-        { type: 'error', label: 'Erreurs système', count: 0 }
-      ])
-    } catch (error) {
-      console.error('Error loading timeline:', error)
-    }
-  }, [])
-
   const loadDashboardData = useCallback(async () => {
+    setLoading(true)
+    setSecondaryLoading(true)
+    const refreshedAt = new Date()
+
     try {
-      setLoading(true)
-      setSecondaryLoading(true)
-      const statsResult = await loadStats()
-      // Afficher rapidement le dashboard après les stats essentielles.
-      if (statsResult?.kycPending !== undefined) {
-        loadAlerts(statsResult.kycPending)
-      }
+      const maintenancePromise = supabase
+        .from('platform_customization')
+        .select('value')
+        .eq('key', 'maintenance_mode')
+        .maybeSingle()
+
+      const statsPromise = loadStats()
+      const chartsPromise = statsPromise.then((meta) => loadCharts(meta.nameByCode))
+      const timelinePromise = loadTimeline()
+      const [maintenanceResult, statsResult] = await Promise.all([
+        maintenancePromise,
+        statsPromise,
+      ])
+      applyAlerts(maintenanceResult.data?.value, refreshedAt)
       setLoading(false)
 
-      // Charger les graphes/timeline en arrière-plan.
-      await Promise.all([loadCharts(), loadTimeline()])
+      await Promise.all([chartsPromise, timelinePromise])
     } catch (error) {
       console.error('Error loading dashboard:', error)
+      applyAlerts(false, refreshedAt)
     } finally {
       setLoading(false)
       setSecondaryLoading(false)
     }
-  }, [loadStats, loadCharts, loadAlerts, loadTimeline])
+  }, [loadStats, loadCharts, loadTimeline, applyAlerts])
 
   useEffect(() => {
     let mounted = true
-    
-    const initializeDashboard = async () => {
-      if (mounted) {
-        await loadDashboardData()
-      }
+
+    const run = async () => {
+      if (mounted) await loadDashboardData()
     }
-    
-    initializeDashboard()
-    
-    // Réduction de charge : rafraîchissement toutes les 3 minutes, uniquement onglet visible.
+    void run()
+
     const interval = setInterval(() => {
       if (mounted && typeof document !== 'undefined' && document.visibilityState === 'visible') {
         loadDashboardData()
       }
     }, 180000)
-    
+
     return () => {
       mounted = false
       clearInterval(interval)
     }
   }, [loadDashboardData])
 
-  const statCards = useMemo(() => [
-    { icon: Users, label: 'Total utilisateurs inscrits', value: stats.totalUsers, color: 'text-blue-600' },
-    { icon: UserCheck, label: 'Total membres', value: stats.totalMembers, color: 'text-green-600' },
-    { icon: Shield, label: 'Total admins tontine', value: stats.totalAdmins, color: 'text-purple-600' },
-    { icon: PiggyBank, label: 'Total tontines créées', value: stats.totalTontines, color: 'text-orange-600' },
-    { 
-      icon: ShieldCheck, 
-      label: 'Vérifications KYC en attente', 
-      value: stats.kycPending, 
-      color: stats.kycPending > 0 ? 'text-red-600' : 'text-gray-600',
-      badge: stats.kycPending > 0 
-    },
-    { icon: FileCheck, label: 'Documents approuvés aujourd\'hui', value: stats.kycApprovedToday, color: 'text-indigo-600' },
-    { icon: Globe, label: 'Pays actifs', value: stats.activeCountries, color: 'text-cyan-600' },
-    { icon: CreditCard, label: 'Méthodes de paiement configurées', value: stats.paymentMethods, color: 'text-pink-600' }
-  ], [stats])
+  const statCards = useMemo(
+    () => [
+      { icon: Users, label: 'Total utilisateurs inscrits', value: stats.totalUsers, color: 'text-blue-600' },
+      { icon: UserCheck, label: 'Total membres', value: stats.totalMembers, color: 'text-green-600' },
+      { icon: Shield, label: 'Total admins tontine', value: stats.totalAdmins, color: 'text-purple-600' },
+      { icon: PiggyBank, label: 'Total tontines créées', value: stats.totalTontines, color: 'text-orange-600' },
+      { icon: Globe, label: 'Pays actifs', value: stats.activeCountries, color: 'text-cyan-600' },
+      {
+        icon: CreditCard,
+        label: 'Méthodes de paiement (pays actifs)',
+        value: stats.paymentMethods,
+        color: 'text-pink-600',
+      },
+    ],
+    [stats]
+  )
+
+  const chartHeight = isMobile ? 240 : 300
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
+      <div className="flex min-h-[50vh] items-center justify-center px-4">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-solidarpay-primary mx-auto"></div>
-          <p className="mt-4 text-solidarpay-text">Chargement des statistiques...</p>
+          <div className="mx-auto h-12 w-12 animate-spin rounded-full border-b-2 border-solidarpay-primary" />
+          <p className="mt-4 text-sm text-solidarpay-text sm:text-base">Chargement des statistiques…</p>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="mx-auto min-w-0 max-w-7xl space-y-4 sm:space-y-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
         {statCards.map((stat, index) => {
           const Icon = stat.icon
           return (
-            <Card key={index} className={stat.badge ? 'border-red-300' : ''}>
+            <Card
+              key={index}
+              className={`min-w-0 touch-manipulation ${stat.badge ? 'border-red-300' : ''}`}
+            >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-solidarpay-text/70">
+                <CardTitle className="text-xs font-medium leading-tight text-solidarpay-text/70 sm:text-sm">
                   {stat.label}
                 </CardTitle>
-                <Icon className={`w-4 h-4 ${stat.color}`} />
+                <Icon className={`h-4 w-4 shrink-0 ${stat.color}`} />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-solidarpay-text">
-                  {stat.value}
-                </div>
+                <div className="text-2xl font-bold tabular-nums text-solidarpay-text sm:text-3xl">{stat.value}</div>
                 {stat.badge && (
                   <Badge variant="destructive" className="mt-2">
                     Attention requise
@@ -383,131 +365,29 @@ export default function AdminDashboard() {
         })}
       </div>
 
-      {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Inscriptions par mois</CardTitle>
-            <CardDescription>3 derniers mois</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {secondaryLoading ? (
-              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={charts.registrations}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Line type="monotone" dataKey="count" stroke="#0891B2" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
+      <AdminDashboardCharts
+        charts={charts}
+        secondaryLoading={secondaryLoading}
+        isMobile={isMobile}
+        chartHeight={chartHeight}
+      />
 
-        <Card>
+      <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:grid-cols-2">
+        <Card className="min-w-0">
           <CardHeader>
-            <CardTitle>Tontines créées par mois</CardTitle>
-            <CardDescription>3 derniers mois</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {secondaryLoading ? (
-              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={charts.tontinesCreated}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="count" fill="#0891B2" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Charts Row 2 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Vérifications KYC</CardTitle>
-            <CardDescription>Approuvées/Rejetées par semaine</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {secondaryLoading ? (
-              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={charts.kycStats}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="week" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="approved" fill="#10B981" />
-                  <Bar dataKey="rejected" fill="#EF4444" />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Répartition géographique</CardTitle>
-            <CardDescription>Utilisateurs par pays</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {secondaryLoading ? (
-              <p className="text-sm text-solidarpay-text/70">Chargement des graphiques...</p>
-            ) : (
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={charts.geography}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={
-                      isMobile
-                        ? false
-                        : ({ country, percent }) => `${country} ${(percent * 100).toFixed(0)}%`
-                    }
-                    outerRadius={isMobile ? 85 : 100}
-                    fill="#8884d8"
-                    dataKey="users"
-                  >
-                    {charts.geography.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  {isMobile ? <Legend layout="horizontal" verticalAlign="bottom" /> : null}
-                </PieChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Alerts and Timeline */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Alertes techniques</CardTitle>
+            <CardTitle className="text-base sm:text-lg">Alertes</CardTitle>
+            <CardDescription>État issu des données réelles de la plateforme</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {alerts.map((alert, index) => {
               const Icon = alert.icon
               return (
-                <Alert key={index} variant={alert.type === 'warning' ? 'destructive' : 'default'}>
-                  <Icon className="w-4 h-4" />
+                <Alert
+                  key={index}
+                  variant={alert.type === 'warning' ? 'destructive' : 'default'}
+                  className="text-sm"
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
                   <AlertTitle>{alert.title}</AlertTitle>
                   <AlertDescription>{alert.description}</AlertDescription>
                 </Alert>
@@ -516,24 +396,31 @@ export default function AdminDashboard() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="min-w-0">
           <CardHeader>
-            <CardTitle>Timeline technique</CardTitle>
+            <CardTitle className="text-base sm:text-lg">Activité récente</CardTitle>
             <CardDescription>Dernières 24 heures</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {timeline.map((item, index) => (
-                <div key={index} className="flex items-center justify-between p-3 bg-solidarpay-bg rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <Activity className="w-5 h-5 text-solidarpay-primary" />
-                    <span className="text-sm font-medium text-solidarpay-text">{item.label}</span>
+            <div className="space-y-3">
+              {secondaryLoading ? (
+                <p className="text-sm text-solidarpay-text/70">Chargement…</p>
+              ) : (
+                timeline.map((item, index) => (
+                  <div
+                    key={index}
+                    className="flex min-w-0 items-center justify-between gap-2 rounded-lg bg-solidarpay-bg p-3"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Activity className="h-5 w-5 shrink-0 text-solidarpay-primary" />
+                      <span className="text-sm font-medium leading-snug text-solidarpay-text">{item.label}</span>
+                    </div>
+                    <Badge variant={item.count > 0 ? 'default' : 'secondary'} className="shrink-0 tabular-nums">
+                      {item.count}
+                    </Badge>
                   </div>
-                  <Badge variant={item.count > 0 ? 'default' : 'secondary'}>
-                    {item.count}
-                  </Badge>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>

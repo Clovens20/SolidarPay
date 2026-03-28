@@ -14,7 +14,7 @@ const features = [
   {
     icon: Shield,
     title: 'Sécurité maximale',
-    description: 'Vérification KYC pour garantir la sécurité de votre tontine familiale'
+    description: 'Connexion sécurisée et suivi transparent de votre tontine familiale'
   },
   {
     icon: Clock,

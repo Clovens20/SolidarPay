@@ -21,6 +21,9 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
 
   const hasActiveCycle = useMemo(() => !!activeCycle?.id, [activeCycle])
 
+  const memberCount = tontine?.members?.length ?? 0
+  const canCreateCycle = memberCount > 0 && !hasActiveCycle
+
   useEffect(() => {
     if (!tontineId) return
     void loadData()
@@ -30,10 +33,14 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
   const loadData = async () => {
     try {
       setLoading(true)
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token
+      const authHeaders = token ? { Authorization: `Bearer ${token}` } : {}
+
       const [tontineRes, cyclesRes, activeRes] = await Promise.all([
-        fetch(`/api/tontines/${tontineId}`),
-        fetch(`/api/cycles/tontine/${tontineId}`),
-        fetch(`/api/cycles/active/${tontineId}`),
+        fetch(`/api/tontines/${tontineId}`, { headers: authHeaders }),
+        fetch(`/api/cycles/tontine/${tontineId}`, { headers: authHeaders }),
+        fetch(`/api/cycles/active/${tontineId}`, { headers: authHeaders }),
       ])
 
       const [tontineData, cyclesData, activeData] = await Promise.all([
@@ -54,7 +61,9 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
       setAdminId(authData?.session?.user?.id || null)
 
       if (activeData?.id) {
-        const contribRes = await fetch(`/api/contributions/cycle/${activeData.id}`)
+        const contribRes = await fetch(`/api/contributions/cycle/${activeData.id}`, {
+          headers: authHeaders,
+        })
         const contribData = await contribRes.json()
         if (contribData?.error) throw new Error(contribData.error)
         setContributions(contribData || [])
@@ -92,7 +101,14 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
   }
 
   const handleCreateCycle = async () => {
-    if (!tontine?.id) return
+    if (!tontine?.id) {
+      toast({
+        title: 'Données non chargées',
+        description: 'Patientez le chargement de la tontine ou actualisez la page.',
+        variant: 'destructive',
+      })
+      return
+    }
     if (hasActiveCycle) {
       toast({
         title: 'Action impossible',
@@ -102,11 +118,22 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
       return
     }
 
+    if (!memberCount) {
+      toast({
+        title: 'Aucun membre',
+        description: 'Ajoutez au moins un membre dans l’onglet « Membres » avant de créer un cycle.',
+        variant: 'destructive',
+      })
+      return
+    }
+
     const nextBeneficiary = getNextBeneficiary()
     if (!nextBeneficiary) {
       toast({
         title: 'Attention',
-        description: 'Tous les membres ont déjà reçu. Recommencez la rotation dans les paramètres.',
+        description:
+          'Aucun bénéficiaire éligible (tous les membres sont marqués comme ayant déjà reçu). Contactez le support ou réinitialisez le statut en base si besoin.',
+        variant: 'destructive',
       })
       return
     }
@@ -116,9 +143,14 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
       const startDate = new Date()
       const endDate = getEndDate(startDate, tontine.frequency)
 
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token
+      const postHeaders = { 'Content-Type': 'application/json' }
+      if (token) postHeaders.Authorization = `Bearer ${token}`
+
       const res = await fetch('/api/cycles', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: postHeaders,
         body: JSON.stringify({
           tontineId: tontine.id,
           beneficiaryId: nextBeneficiary.userId,
@@ -207,9 +239,10 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
           </p>
         </div>
         <Button
+          type="button"
           className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
           onClick={handleCreateCycle}
-          disabled={loading || creating || hasActiveCycle}
+          disabled={loading || creating || !canCreateCycle}
         >
           <Plus className="w-4 h-4 mr-2" />
           {creating ? 'Création...' : 'Nouveau cycle'}
@@ -228,10 +261,16 @@ export default function CyclesTab({ tontineId, onRefreshMeta }) {
               <Calendar className="w-16 h-16 text-solidarpay-text/30 mb-4" />
               <h3 className="text-lg font-semibold text-solidarpay-text mb-2">Aucun cycle</h3>
               <p className="text-sm text-solidarpay-text/70 mb-4">Créez votre premier cycle pour commencer</p>
+              {!canCreateCycle && !hasActiveCycle && memberCount === 0 ? (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-4 max-w-md text-center">
+                  Ajoutez d’abord des membres dans l’onglet « Membres » : un cycle nécessite au moins un participant.
+                </p>
+              ) : null}
               <Button
+                type="button"
                 className="bg-solidarpay-primary hover:bg-solidarpay-secondary"
                 onClick={handleCreateCycle}
-                disabled={creating || hasActiveCycle}
+                disabled={creating || !canCreateCycle}
               >
                 <Plus className="w-4 h-4 mr-2" />
                 {creating ? 'Création...' : 'Créer un cycle'}

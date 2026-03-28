@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -9,8 +9,10 @@ import { formatCurrency } from '@/lib/currency-utils'
 import ReceiverDetails from '@/components/tontine/ReceiverDetails'
 import { Users, DollarSign, Calendar, TrendingUp, Copy } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 
-export default function OverviewTab({ tontine }) {
+export default function OverviewTab({ tontine, onTontineUpdated }) {
   const { toast } = useToast()
   const [stats, setStats] = useState({
     memberCount: 0,
@@ -19,10 +21,66 @@ export default function OverviewTab({ tontine }) {
     completedCycles: 0
   })
   const [loading, setLoading] = useState(true)
+  const [maxMembersDraft, setMaxMembersDraft] = useState('')
+  const [savingMaxMembers, setSavingMaxMembers] = useState(false)
 
   useEffect(() => {
     loadStats()
   }, [tontine.id])
+
+  useEffect(() => {
+    setMaxMembersDraft(
+      tontine.maxMembers != null && Number(tontine.maxMembers) >= 1
+        ? String(tontine.maxMembers)
+        : ''
+    )
+  }, [tontine.id, tontine.maxMembers])
+
+  const copyInviteCode = useCallback(async () => {
+    const code = tontine.inviteCode
+    if (!code) return
+
+    const notifyOk = () =>
+      toast({
+        title: 'Copié',
+        description: 'Code d’invitation copié dans le presse-papiers.',
+      })
+
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText && window.isSecureContext) {
+        await navigator.clipboard.writeText(code)
+        notifyOk()
+        return
+      }
+      throw new Error('clipboard-api')
+    } catch {
+      try {
+        const ta = document.createElement('textarea')
+        ta.value = code
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        const ok = document.execCommand('copy')
+        document.body.removeChild(ta)
+        if (ok) notifyOk()
+        else {
+          toast({
+            title: 'Copie manuelle',
+            description: `Copiez ce code : ${code}`,
+            variant: 'destructive',
+          })
+        }
+      } catch {
+        toast({
+          title: 'Copie impossible',
+          description: `Sélectionnez le code à la souris ou copiez : ${code}`,
+          variant: 'destructive',
+        })
+      }
+    }
+  }, [tontine.inviteCode, toast])
 
   const loadStats = async () => {
     try {
@@ -60,6 +118,60 @@ export default function OverviewTab({ tontine }) {
       console.error('Error loading stats:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const saveMaxMembers = async () => {
+    const raw = maxMembersDraft.trim()
+    const value =
+      raw === ''
+        ? null
+        : Math.floor(Number(raw))
+    if (raw !== '' && (!Number.isFinite(value) || value < 1)) {
+      toast({
+        title: 'Valeur invalide',
+        description: 'Entrez un entier ≥ 1 ou laissez vide pour aucune limite fixée.',
+        variant: 'destructive',
+      })
+      return
+    }
+    if (value != null && value < stats.memberCount) {
+      toast({
+        title: 'Limite trop basse',
+        description: `Vous avez déjà ${stats.memberCount} membre(s). La limite doit être au moins égale à ce nombre.`,
+        variant: 'destructive',
+      })
+      return
+    }
+    setSavingMaxMembers(true)
+    try {
+      const { error } = await supabase
+        .from('tontines')
+        .update({ maxMembers: value, updatedAt: new Date().toISOString() })
+        .eq('id', tontine.id)
+      if (error) throw error
+      toast({
+        title: 'Capacité mise à jour',
+        description:
+          value == null
+            ? 'Aucune limite fixée : vous pourrez ajouter des membres sans plafond défini.'
+            : `Maximum ${value} membre(s).`,
+      })
+      onTontineUpdated?.()
+      loadStats()
+    } catch (e) {
+      console.error(e)
+      const hint =
+        e.message?.includes('maxMembers') || e.code === 'PGRST204'
+          ? ' Exécutez le script SQL tontines-max-members.sql dans Supabase si la colonne est absente.'
+          : ''
+      toast({
+        title: 'Erreur',
+        description: (e.message || 'Enregistrement impossible') + hint,
+        variant: 'destructive',
+      })
+    } finally {
+      setSavingMaxMembers(false)
     }
   }
 
@@ -143,10 +255,7 @@ export default function OverviewTab({ tontine }) {
                     variant="outline"
                     size="sm"
                     className="gap-1"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(tontine.inviteCode)
-                      toast({ title: 'Copié', description: 'Code d’invitation copié dans le presse-papiers.' })
-                    }}
+                    onClick={() => void copyInviteCode()}
                   >
                     <Copy className="h-3.5 w-3.5" />
                     Copier
@@ -170,6 +279,41 @@ export default function OverviewTab({ tontine }) {
                 {tontine.frequency === 'monthly' ? 'Mensuelle' : 
                  tontine.frequency === 'biweekly' ? 'Bi-hebdomadaire' : 
                  'Hebdomadaire'}
+              </p>
+            </div>
+            <div className="sm:col-span-2 rounded-lg border border-solidarpay-primary/20 bg-solidarpay-bg/50 p-4 space-y-3">
+              <div>
+                <Label htmlFor="max-members">Nombre maximum de membres</Label>
+                <p className="text-xs text-solidarpay-text/60 mt-1">
+                  Définissez combien de personnes peuvent rejoindre la tontine. Laissez vide pour ne pas fixer de
+                  plafond. Dans l’onglet Membres, chaque ajout permet de choisir le rang (tour) dans la rotation.
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <Input
+                  id="max-members"
+                  type="number"
+                  min={Math.max(1, stats.memberCount)}
+                  step={1}
+                  placeholder="Illimité"
+                  value={maxMembersDraft}
+                  onChange={(e) => setMaxMembersDraft(e.target.value)}
+                  className="sm:max-w-[200px]"
+                />
+                <Button
+                  type="button"
+                  onClick={() => void saveMaxMembers()}
+                  disabled={savingMaxMembers}
+                  className="bg-solidarpay-primary hover:bg-solidarpay-secondary w-full sm:w-auto"
+                >
+                  {savingMaxMembers ? 'Enregistrement…' : 'Enregistrer la capacité'}
+                </Button>
+              </div>
+              <p className="text-xs text-solidarpay-text/60">
+                Membres actuels : {stats.memberCount}
+                {tontine.maxMembers != null && Number(tontine.maxMembers) >= 1
+                  ? ` — limite en base : ${tontine.maxMembers}`
+                  : ' — pas de limite en base'}
               </p>
             </div>
             <div className="sm:col-span-2">

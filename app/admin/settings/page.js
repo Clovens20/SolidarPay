@@ -8,7 +8,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Settings, Save } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-import { logSystemEvent } from '@/lib/system-logger'
+import { logSystemSettingsChange } from '@/lib/system-logger'
+import { jsonbScalarToString, stringToJsonbValue } from '@/lib/jsonb-platform'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState({
@@ -33,11 +34,11 @@ export default function SettingsPage() {
 
       if (data) {
         const settingsMap = {}
-        data.forEach(item => {
-          if (item.key === 'site_name') settingsMap.siteName = typeof item.value === 'string' ? item.value.replace(/"/g, '') : item.value
-          if (item.key === 'contact_email') settingsMap.contactEmail = typeof item.value === 'string' ? item.value.replace(/"/g, '') : item.value
+        data.forEach((item) => {
+          if (item.key === 'site_name') settingsMap.siteName = jsonbScalarToString(item.value) || 'SolidarPay'
+          if (item.key === 'contact_email') settingsMap.contactEmail = jsonbScalarToString(item.value) || ''
         })
-        setSettings(prev => ({ ...prev, ...settingsMap }))
+        setSettings((prev) => ({ ...prev, ...settingsMap }))
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -66,22 +67,32 @@ export default function SettingsPage() {
       ]
 
       for (const update of updates) {
+        const description =
+          update.key === 'site_name'
+            ? 'Nom du site affiché sur la plateforme'
+            : 'Email de contact affiché aux utilisateurs'
         const { error } = await supabase
           .from('platform_customization')
-          .upsert({
-            key: update.key,
-            value: update.value,
-            updatedBy: update.updatedBy,
-            updatedAt: new Date().toISOString()
-          }, { onConflict: 'key' })
+          .upsert(
+            {
+              key: update.key,
+              value: stringToJsonbValue(update.value),
+              description,
+              updatedBy: update.updatedBy,
+              updatedAt: new Date().toISOString(),
+            },
+            { onConflict: 'key' }
+          )
 
         if (error) throw error
       }
 
-      await logSystemEvent('system_settings', 'Paramètres système modifiés', {
-        siteName: settings.siteName,
-        contactEmail: settings.contactEmail
-      }, null, user?.id)
+      await logSystemSettingsChange(
+        'site_name / contact_email',
+        null,
+        { siteName: settings.siteName, contactEmail: settings.contactEmail },
+        user?.id
+      )
 
       toast({
         title: 'Succès',

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import { Save, Eye, Loader2, Plus, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import { logSystemEvent } from '@/lib/system-logger'
@@ -22,7 +22,6 @@ const FOOTER_SECTIONS = [
 ]
 
 export default function FooterEditor() {
-  const { toast } = useToast()
   const [sections, setSections] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -62,7 +61,7 @@ export default function FooterEditor() {
     } finally {
       setLoading(false)
     }
-  }, [toast])
+  }, [])
 
   useEffect(() => {
     loadSections()

@@ -9,10 +9,10 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import { Save, Loader2, Plus, Trash2, FileText, ExternalLink } from 'lucide-react'
-import { systemLogger } from '@/lib/system-logger'
+import { logCustomizationChange } from '@/lib/system-logger'
 
 const LEGAL_PAGES = [
   { slug: 'about', name: 'À propos', description: 'Page À propos de SolidarPay' },
@@ -22,7 +22,6 @@ const LEGAL_PAGES = [
 ]
 
 export default function LegalPagesEditor() {
-  const { toast } = useToast()
   const [pages, setPages] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -49,11 +48,6 @@ export default function LegalPagesEditor() {
         pagesMap[page.page_slug] = page
       })
       setPages(pagesMap)
-
-      // Si aucune page active, définir la première
-      if (data && data.length > 0 && !activeTab) {
-        setActiveTab(data[0].page_slug)
-      }
     } catch (error) {
       console.error('Error loading legal pages:', error)
       toast({
@@ -66,7 +60,7 @@ export default function LegalPagesEditor() {
     } finally {
       setLoading(false)
     }
-  }, [toast, activeTab])
+  }, [])
 
   useEffect(() => {
     loadPages()
@@ -103,10 +97,7 @@ export default function LegalPagesEditor() {
 
       if (error) throw error
 
-      await systemLogger.log('legal_page_updated', {
-        page: slug,
-        action: 'Page légale mise à jour'
-      })
+      await logCustomizationChange(`legal_page/${slug}`, { page: slug, action: 'update' })
 
       toast({
         title: 'Sauvegardé !',
@@ -140,9 +131,7 @@ export default function LegalPagesEditor() {
 
       if (error) throw error
 
-      await systemLogger.log('legal_page_deleted', {
-        page: slug
-      })
+      await logCustomizationChange(`legal_page/${slug}`, { page: slug, action: 'disabled' })
 
       toast({
         title: 'Désactivée !',

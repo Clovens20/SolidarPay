@@ -637,6 +637,39 @@ export async function POST(request) {
     if (path === 'tontines/members/add') {
       const { tontineId, userId } = body
 
+      const { data: existing } = await supabase
+        .from('tontine_members')
+        .select('id')
+        .eq('tontineId', tontineId)
+        .eq('userId', userId)
+        .maybeSingle()
+      if (existing) {
+        return NextResponse.json(
+          { error: 'Ce membre fait déjà partie de la tontine.' },
+          { status: 409 }
+        )
+      }
+
+      const { data: tontineRow } = await supabase
+        .from('tontines')
+        .select('maxMembers')
+        .eq('id', tontineId)
+        .maybeSingle()
+      const cap = tontineRow?.maxMembers != null ? Number(tontineRow.maxMembers) : null
+      if (cap != null && Number.isFinite(cap) && cap >= 1) {
+        const { count, error: cErr } = await supabase
+          .from('tontine_members')
+          .select('*', { count: 'exact', head: true })
+          .eq('tontineId', tontineId)
+        if (cErr) throw cErr
+        if ((count || 0) >= cap) {
+          return NextResponse.json(
+            { error: `La tontine est complète (${cap} membres maximum).` },
+            { status: 400 }
+          )
+        }
+      }
+
       // Get next rotation order
       const { data: lastMember } = await supabase
         .from('tontine_members')
@@ -644,7 +677,7 @@ export async function POST(request) {
         .eq('tontineId', tontineId)
         .order('rotationOrder', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
       const rotationOrder = lastMember ? lastMember.rotationOrder + 1 : 1
 
@@ -658,7 +691,15 @@ export async function POST(request) {
         .select()
         .single()
 
-      if (error) throw error
+      if (error) {
+        if (error.code === '23505') {
+          return NextResponse.json(
+            { error: 'Ce membre est déjà dans cette tontine ou le rang est en conflit.' },
+            { status: 409 }
+          )
+        }
+        throw error
+      }
       return NextResponse.json(data)
     }
 

@@ -196,7 +196,7 @@ export default function ManageTontinePage() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
-          <OverviewTab tontine={tontine} />
+          <OverviewTab tontine={tontine} onTontineUpdated={loadTontine} />
         </TabsContent>
 
         <TabsContent value="members" className="mt-6">
@@ -208,6 +208,7 @@ export default function ManageTontinePage() {
             currency={tontine.currency}
             kohoReceiverEmail={tontine.kohoReceiverEmail}
             adminId={tontine.adminId}
+            maxMembers={tontine.maxMembers}
           />
         </TabsContent>
 

@@ -12,7 +12,7 @@ const benefits = [
   {
     icon: Shield,
     title: 'Sécurité',
-    description: 'Vérification KYC et protection des données pour une tranquillité d\'esprit'
+    description: 'Protection des données et bonnes pratiques pour une tranquillité d\'esprit'
   },
   {
     icon: Eye,

@@ -15,7 +15,6 @@ import { Filter, X } from 'lucide-react'
 
 const EVENT_TYPES = [
   { value: 'auth', label: 'Authentification' },
-  { value: 'kyc', label: 'KYC' },
   { value: 'tontine', label: 'Tontines' },
   { value: 'system', label: 'Système' },
   { value: 'error', label: 'Erreurs' }

@@ -7,6 +7,7 @@ import AdminTontineHeader from '@/components/admin-tontine/AdminTontineHeader'
 import AdminTontineSidebar from '@/components/admin-tontine/AdminTontineSidebar'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
+import { Toaster } from '@/components/ui/toaster'
 
 export default function AdminTontineLayout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -169,11 +170,11 @@ export default function AdminTontineLayout({ children }) {
           </SheetContent>
         </Sheet>
 
-        {/* Main Content */}
-        <main className="flex-1 w-full md:ml-64 p-4 md:p-6">
+        <main className="min-w-0 flex-1 w-full pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 md:ml-64 md:pt-0 px-3 sm:px-4 md:px-6">
           {children}
         </main>
       </div>
+      <Toaster />
     </div>
   )
 }

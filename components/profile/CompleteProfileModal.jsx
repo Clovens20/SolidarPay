@@ -49,14 +49,13 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
   })
 
   useEffect(() => {
-    if (open) {
-      loadCountries()
-      // Pré-remplir avec le pays de l'utilisateur s'il existe
-      if (user?.country) {
-        setSelectedCountry(user.country)
-      }
+    if (!open) return
+    loadCountries()
+    if (user?.country) {
+      setSelectedCountry(user.country)
     }
-  }, [open, user])
+    // Dépendre de l’id / pays, pas de l’objet user (nouvelle référence à chaque render parent).
+  }, [open, user?.id, user?.country])
 
   const loadCountries = async () => {
     try {

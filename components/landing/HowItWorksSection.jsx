@@ -8,7 +8,7 @@ const steps = [
     icon: UserPlus,
     number: '1',
     title: 'Créez votre compte',
-    description: 'Inscrivez-vous gratuitement et vérifiez votre identité avec notre système KYC sécurisé'
+    description: 'Inscrivez-vous gratuitement en quelques minutes'
   },
   {
     icon: Users,

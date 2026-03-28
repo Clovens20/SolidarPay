@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -23,6 +23,7 @@ import {
 import { useToast } from '@/hooks/use-toast'
 import { Toaster } from '@/components/ui/toaster'
 import { formatCurrency, getCurrencyInfo, getCurrencyByCountry } from '@/lib/currency-utils'
+import { jsonbScalarToString } from '@/lib/jsonb-platform'
 import {
   receiverFieldModeForCountry,
   serializeChileReceiver,
@@ -41,16 +42,7 @@ import {
 import { resolveTontineByInviteInput } from '@/lib/tontine-invite-code'
 import ReceiverDetails from '@/components/tontine/ReceiverDetails'
 
-const LandingPage = dynamic(() => import('@/components/landing/LandingPage'), {
-  loading: () => (
-    <div className="min-h-screen bg-gradient-to-br from-cyan-50 via-blue-50 to-indigo-100 flex items-center justify-center">
-      <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-600 mx-auto" />
-        <p className="mt-4 text-gray-600">Chargement…</p>
-      </div>
-    </div>
-  ),
-})
+import LandingPage from '@/components/landing/LandingPage'
 
 const CompleteProfileModal = dynamic(() =>
   import('@/components/profile/CompleteProfileModal').then((m) => m.default)
@@ -78,6 +70,8 @@ import {
   User,
   UserPlus,
   MapPin,
+  Search,
+  LayoutGrid,
 } from 'lucide-react'
 
 export default function App() {
@@ -108,6 +102,7 @@ export default function App() {
   const [adminCreateCurrency, setAdminCreateCurrency] = useState('CAD')
   const [selectedMembers, setSelectedMembers] = useState([])
   const [logoUrl, setLogoUrl] = useState(null)
+  const [siteDisplayName, setSiteDisplayName] = useState('SolidarPay')
   const [showCompleteProfile, setShowCompleteProfile] = useState(false)
 
   const [joinInviteInput, setJoinInviteInput] = useState('')
@@ -117,18 +112,26 @@ export default function App() {
   const [countryTontines, setCountryTontines] = useState([])
   const [countryDiscoverLabel, setCountryDiscoverLabel] = useState('')
   const [joinRowLoadingId, setJoinRowLoadingId] = useState(null)
+  /** Vue membre : explorer les tontines du pays vs mes tontines */
+  const [memberViewTab, setMemberViewTab] = useState('explorer')
+  const [countryTontineSearch, setCountryTontineSearch] = useState('')
+  const memberTabInitialized = useRef(false)
+  const memberExplorerRef = useRef(null)
 
   useEffect(() => {
-    checkAuth()
-    loadLogo()
+    void checkAuth().catch((err) => {
+      console.error('checkAuth:', err)
+      setLoading(false)
+    })
+    void loadLogo().catch((err) => console.error('loadLogo:', err))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (user) {
-      loadData()
-    }
-  }, [user])
+    if (!user?.id) return
+    loadData()
+    // Éviter de relancer loadData à chaque nouvelle référence d’objet user identique.
+  }, [user?.id, user?.role, user?.country])
 
   useEffect(() => {
     if (!user || user.role !== 'admin' || !user.country) {
@@ -150,6 +153,24 @@ export default function App() {
       cancelled = true
     }
   }, [user?.id, user?.role, user?.country])
+
+  useEffect(() => {
+    if (user?.role !== 'member' || memberTabInitialized.current) return
+    if (tontines.length > 0) {
+      setMemberViewTab('mes')
+      memberTabInitialized.current = true
+    }
+  }, [user?.role, tontines.length])
+
+  const filteredCountryTontines = useMemo(() => {
+    const q = countryTontineSearch.trim().toLowerCase()
+    if (!q) return countryTontines
+    return countryTontines.filter((row) => {
+      const name = (row.name || '').toLowerCase()
+      const adminName = (row.admin?.fullName || '').toLowerCase()
+      return name.includes(q) || adminName.includes(q)
+    })
+  }, [countryTontines, countryTontineSearch])
 
   const checkProfileCompletion = async () => {
     if (!user?.id) return
@@ -208,10 +229,31 @@ export default function App() {
       return
     }
     
+    const SESSION_WAIT_MS = 12000
+
     try {
-      // Vérifier que la session Supabase est toujours valide
-      const { data: { session: validSession }, error } = await supabase.auth.getSession()
-      
+      // Évite un écran « Chargement… » infini si getSession ne répond pas (réseau, mauvaise URL, etc.)
+      const sessionOutcome = await Promise.race([
+        supabase.auth.getSession().then((r) => ({ type: 'ok', r })),
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ type: 'timeout' }), SESSION_WAIT_MS)
+        ),
+      ])
+
+      if (sessionOutcome.type === 'timeout') {
+        console.warn(
+          'SolidarPay: getSession a dépassé le délai — vérifiez NEXT_PUBLIC_SUPABASE_URL et le réseau.'
+        )
+        localStorage.removeItem('solidarpay_session')
+        localStorage.removeItem('solidarpay_user')
+        return
+      }
+
+      const {
+        data: { session: validSession },
+        error,
+      } = sessionOutcome.r
+
       // Si pas de session valide ou erreur, nettoyer et afficher landing page
       if (error || !validSession) {
         localStorage.removeItem('solidarpay_session')
@@ -564,31 +606,38 @@ export default function App() {
 
   const loadLogo = async () => {
     try {
-      // D'abord, essayer de charger depuis la base de données
       const { data, error } = await supabase
         .from('platform_customization')
-        .select('value')
-        .eq('key', 'logo_url')
-        .maybeSingle()
+        .select('key, value')
+        .in('key', ['logo_url', 'site_name', 'contact_email'])
 
-      if (!error && data?.value) {
-        // La valeur peut être un JSONB string ou un objet
-        const logoValue = typeof data.value === 'string' 
-          ? data.value.replace(/"/g, '') 
-          : data.value
-        if (logoValue && logoValue !== 'null' && logoValue.trim() !== '') {
-          setLogoUrl(logoValue)
-          return
-        }
+      if (error || !data?.length) {
+        setLogoUrl('/logo.png.jpg')
+        setSiteDisplayName('SolidarPay')
+        return
       }
-      
-      // Si pas de logo dans la base, utiliser le logo local par défaut
-      // Le logo est dans public/logo.png.jpg
-      setLogoUrl('/logo.png.jpg')
+
+      const byKey = Object.fromEntries(data.map((r) => [r.key, r.value]))
+
+      const rawLogo = byKey.logo_url
+      if (rawLogo != null && rawLogo !== false) {
+        const logoValue =
+          typeof rawLogo === 'string' ? rawLogo.replace(/^"|"$/g, '') : jsonbScalarToString(rawLogo)
+        if (logoValue && logoValue !== 'null' && String(logoValue).trim() !== '') {
+          setLogoUrl(String(logoValue).trim())
+        } else {
+          setLogoUrl('/logo.png.jpg')
+        }
+      } else {
+        setLogoUrl('/logo.png.jpg')
+      }
+
+      const name = jsonbScalarToString(byKey.site_name)
+      setSiteDisplayName(name?.trim() ? name.trim() : 'SolidarPay')
     } catch (error) {
       console.error('Error loading logo:', error)
-      // En cas d'erreur, utiliser le logo local par défaut
       setLogoUrl('/logo.png.jpg')
+      setSiteDisplayName('SolidarPay')
     }
   }
 
@@ -910,7 +959,7 @@ export default function App() {
           onComplete={handleProfileComplete}
         />
       )}
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-cyan-50">
+      <div className="min-h-screen min-w-0 overflow-x-clip bg-gradient-to-br from-slate-50 via-blue-50 to-cyan-50">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 shadow-sm">
         <div className="container mx-auto px-3 sm:px-4 py-3 md:py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -918,7 +967,7 @@ export default function App() {
             {logoUrl ? (
               <img 
                 src={logoUrl} 
-                alt="SolidarPay" 
+                alt={siteDisplayName}
                 className="h-8 w-8 md:h-12 md:w-12 object-contain bg-white rounded-full shadow"
                 onError={(e) => {
                   // Si le logo personnalisé échoue, utiliser le logo par défaut avec lettre S
@@ -933,7 +982,7 @@ export default function App() {
             </div>
             <div className="min-w-0">
               <h1 className="text-lg md:text-2xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 bg-clip-text text-transparent truncate sm:truncate-none">
-                SolidarPay
+                {siteDisplayName}
               </h1>
               <p className="hidden sm:block text-xs md:text-sm text-slate-600">Tontine digitalisée</p>
             </div>
@@ -946,15 +995,47 @@ export default function App() {
               </Badge>
             </div>
             {user.role === 'member' && (
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={() => router.push('/profile')}
-                className="hidden md:flex items-center gap-2"
-              >
-                <User className="h-4 w-4" />
-                <span className="hidden lg:inline">Mon Profil</span>
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  className="gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white shrink-0"
+                  onClick={() => {
+                    setMemberViewTab('explorer')
+                    requestAnimationFrame(() =>
+                      memberExplorerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    )
+                  }}
+                >
+                  <Search className="h-4 w-4 shrink-0" />
+                  <span className="max-w-[140px] truncate sm:max-w-none">
+                    Tontines dans mon pays
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 shrink-0"
+                  onClick={() => {
+                    setMemberViewTab('mes')
+                    requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: 'smooth' }))
+                  }}
+                >
+                  <LayoutGrid className="h-4 w-4 shrink-0" />
+                  <span className="hidden sm:inline">Mes tontines</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push('/profile')}
+                  className="hidden md:flex items-center gap-2"
+                >
+                  <User className="h-4 w-4" />
+                  <span className="hidden lg:inline">Mon Profil</span>
+                </Button>
+              </>
             )}
             <Button variant="outline" size="icon" onClick={handleLogout} className="h-9 w-9 md:h-10 md:w-10">
               <LogOut className="h-4 w-4" />
@@ -1474,8 +1555,23 @@ export default function App() {
             )
           })()
         ) : (
-          // MEMBER VIEW
-          <div className="space-y-6">
+          <div ref={memberExplorerRef} className="space-y-6">
+            <Tabs value={memberViewTab} onValueChange={setMemberViewTab} className="w-full">
+              <TabsList className="mb-4 grid h-auto w-full grid-cols-2 gap-1 p-1 sm:mb-6">
+                <TabsTrigger
+                  value="explorer"
+                  className="gap-2 py-2.5 text-xs sm:text-sm data-[state=active]:bg-cyan-600 data-[state=active]:text-white"
+                >
+                  <Search className="h-4 w-4 shrink-0" />
+                  <span className="truncate">Voir / chercher tontines</span>
+                </TabsTrigger>
+                <TabsTrigger value="mes" className="gap-2 py-2.5 text-xs sm:text-sm">
+                  <LayoutGrid className="h-4 w-4 shrink-0" />
+                  Mes tontines
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="explorer" className="mt-0 space-y-6">
             {!user.country ? (
               <Card>
                 <CardHeader>
@@ -1503,10 +1599,28 @@ export default function App() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {countryTontines.length > 0 ? (
+                    <div className="mb-4">
+                      <Label htmlFor="search-country-tontines" className="text-sm text-muted-foreground">
+                        Rechercher par nom de tontine ou d&apos;administrateur
+                      </Label>
+                      <Input
+                        id="search-country-tontines"
+                        value={countryTontineSearch}
+                        onChange={(e) => setCountryTontineSearch(e.target.value)}
+                        placeholder="Tapez pour filtrer la liste…"
+                        className="mt-1 max-w-md"
+                      />
+                    </div>
+                  ) : null}
                   {countryTontines.length === 0 ? (
                     <p className="text-sm text-muted-foreground">
                       Aucune tontine active dans ce pays pour le moment. Vous pouvez rejoindre une tontine avec un code
                       ou un identifiant ci-dessous.
+                    </p>
+                  ) : filteredCountryTontines.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Aucun résultat pour « {countryTontineSearch.trim()} ». Essayez un autre mot-clé.
                     </p>
                   ) : (
                     <>
@@ -1523,7 +1637,7 @@ export default function App() {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {countryTontines.map((row) => {
+                            {filteredCountryTontines.map((row) => {
                               const isMember = tontines.some((t) => t.id === row.id)
                               const pending = myJoinRequests.some(
                                 (r) => r.tontineId === row.id && r.status === 'pending'
@@ -1665,6 +1779,9 @@ export default function App() {
               </Card>
             ) : null}
 
+              </TabsContent>
+
+              <TabsContent value="mes" className="mt-0 space-y-6">
             {/* Tontine Selector */}
             {tontines.length > 0 ? (
               <Card>
@@ -1707,8 +1824,8 @@ export default function App() {
                       Vous n&apos;êtes actuellement membre d&apos;aucune tontine.
                     </p>
                     <p className="text-xs text-gray-500">
-                      Utilisez le formulaire ci-dessus avec le code ou l’identifiant fourni par l’administrateur, ou
-                      demandez-lui de vous ajouter depuis son espace.
+                      Ouvrez l’onglet <strong>Voir / chercher tontines</strong> pour parcourir les tontines actives
+                      dans votre pays, ou utilisez un code d’invitation.
                     </p>
                   </div>
                 </CardContent>
@@ -2028,6 +2145,8 @@ export default function App() {
                 </CardContent>
               </Card>
             )}
+              </TabsContent>
+            </Tabs>
           </div>
         )}
       </main>

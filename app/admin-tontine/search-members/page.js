@@ -23,9 +23,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Search, ArrowLeft, CheckCircle, Clock, XCircle, Eye, FileText, User, Mail, Phone, Globe } from 'lucide-react'
+import { Search, ArrowLeft, User, Mail, Phone, Globe } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
-import KYCDocumentModal from '@/components/admin-tontine/KYCDocumentModal'
 
 export default function SearchMembersPage() {
   const router = useRouter()
@@ -39,7 +38,6 @@ export default function SearchMembersPage() {
   const [countryNames, setCountryNames] = useState({})
   const [loadingCountries, setLoadingCountries] = useState(true)
   const [searching, setSearching] = useState(false)
-  const [kycModal, setKycModal] = useState(null)
   const [viewProfileModal, setViewProfileModal] = useState(null)
 
   useEffect(() => {
@@ -202,52 +200,6 @@ export default function SearchMembersPage() {
     })
   }
 
-  const getKYCStatus = (kyc) => {
-    if (!kyc) {
-      return {
-        status: 'not_verified',
-        label: 'Non vérifié',
-        color: 'destructive',
-        icon: XCircle
-      }
-    }
-
-    switch (kyc.status) {
-      case 'approved':
-      case 'verifie':
-        return {
-          status: 'approved',
-          label: 'Vérifié',
-          color: 'default',
-          icon: CheckCircle
-        }
-      case 'pending':
-      case 'en_attente':
-      case 'pending_review':
-        return {
-          status: 'pending',
-          label: 'En attente',
-          color: 'secondary',
-          icon: Clock
-        }
-      case 'rejected':
-      case 'rejete':
-        return {
-          status: 'rejected',
-          label: 'Rejeté',
-          color: 'destructive',
-          icon: XCircle
-        }
-      default:
-        return {
-          status: 'not_verified',
-          label: 'Non vérifié',
-          color: 'destructive',
-          icon: XCircle
-        }
-    }
-  }
-
   const handleSearch = async () => {
     if (!searchTerm.trim()) {
       toast({
@@ -277,31 +229,13 @@ export default function SearchMembersPage() {
 
       if (error) throw error
 
-      // Load KYC status for each result
-      const resultsWithKYC = await Promise.all(
-        (data || []).map(async (user) => {
-          const { data: kyc } = await supabase
-            .from('kyc_documents')
-            .select('*')
-            .eq('userId', user.id)
-            .order('createdAt', { ascending: false })
-            .limit(1)
-            .maybeSingle()
+      const list = data || []
+      setSearchResults(list)
 
-          return {
-            ...user,
-            kyc: kyc || null
-          }
-        })
-      )
-
-      setSearchResults(resultsWithKYC)
-      
-      // Group results by region and country
-      const grouped = groupResultsByRegionAndCountry(resultsWithKYC)
+      const grouped = groupResultsByRegionAndCountry(list)
       setGroupedResults(grouped)
 
-      if (resultsWithKYC.length === 0) {
+      if (list.length === 0) {
         toast({
           title: 'Aucun résultat',
           description: 'Aucun membre ne correspond à votre recherche',
@@ -317,19 +251,6 @@ export default function SearchMembersPage() {
     } finally {
       setSearching(false)
     }
-  }
-
-  const handleViewKYC = async (user) => {
-    if (!user.kyc) {
-      toast({
-        title: 'Aucun document',
-        description: 'Ce membre n\'a pas encore soumis de document KYC',
-        variant: 'destructive'
-      })
-      return
-    }
-
-    setKycModal(user)
   }
 
   const handleViewProfile = (user) => {
@@ -516,9 +437,6 @@ export default function SearchMembersPage() {
                         {/* Members Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                           {countryData.members.map((user) => {
-                            const kycInfo = getKYCStatus(user.kyc)
-                            const KYCIcon = kycInfo.icon
-
                             return (
                               <Card key={user.id} className="border-solidarpay-border hover:shadow-md transition-shadow">
                                 <CardContent className="pt-6">
@@ -544,15 +462,6 @@ export default function SearchMembersPage() {
                                       </div>
                                     </div>
 
-                                    {/* KYC Status */}
-                                    <div className="flex items-center justify-between">
-                                      <Badge variant={kycInfo.color} className="flex items-center gap-1">
-                                        <KYCIcon className="w-3 h-3" />
-                                        {kycInfo.label}
-                                      </Badge>
-                                    </div>
-
-                                    {/* Actions */}
                                     <div className="flex gap-2 pt-2 border-t border-solidarpay-border">
                                       <Button
                                         variant="outline"
@@ -562,16 +471,6 @@ export default function SearchMembersPage() {
                                       >
                                         <User className="w-4 h-4 mr-1" />
                                         Profil
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleViewKYC(user)}
-                                        disabled={!user.kyc}
-                                        className="flex-1"
-                                      >
-                                        <FileText className="w-4 h-4 mr-1" />
-                                        KYC
                                       </Button>
                                     </div>
                                   </div>
@@ -604,15 +503,6 @@ export default function SearchMembersPage() {
             </p>
           </CardContent>
         </Card>
-      )}
-
-      {/* KYC Document Modal */}
-      {kycModal && kycModal.kyc && (
-        <KYCDocumentModal
-          member={{ user: kycModal, kyc: kycModal.kyc }}
-          tontineName="Recherche globale"
-          onClose={() => setKycModal(null)}
-        />
       )}
 
       {/* Profile View Modal */}
@@ -672,37 +562,10 @@ export default function SearchMembersPage() {
                         : 'Non disponible'}
                     </p>
                   </div>
-                  <div>
-                    <Label className="text-xs text-solidarpay-text/70">Statut KYC</Label>
-                    <div className="mt-1">
-                      {(() => {
-                        const kycStatus = getKYCStatus(viewProfileModal.kyc)
-                        const StatusIcon = kycStatus.icon
-                        return (
-                          <Badge variant={kycStatus.color} className="flex items-center gap-1 w-fit">
-                            <StatusIcon className="w-3 h-3" />
-                            {kycStatus.label}
-                          </Badge>
-                        )
-                      })()}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
             <DialogFooter>
-              {viewProfileModal.kyc && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setViewProfileModal(null)
-                    handleViewKYC(viewProfileModal)
-                  }}
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  Voir le document KYC
-                </Button>
-              )}
               <Button onClick={() => setViewProfileModal(null)}>
                 Fermer
               </Button>

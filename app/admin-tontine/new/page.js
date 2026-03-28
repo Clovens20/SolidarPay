@@ -48,6 +48,7 @@ export default function NewTontinePage() {
     clAccountType: '',
     clAccountNumber: '',
     paymentMode: 'direct',
+    maxMembers: '',
   })
 
   const receiverMode = receiverFieldModeForCountry(adminCountry)
@@ -143,6 +144,16 @@ export default function NewTontinePage() {
 
       const inviteCode = await ensureUniqueInviteCode(supabase)
 
+      const maxRaw = String(formData.maxMembers || '').trim()
+      let maxMembers = null
+      if (maxRaw !== '') {
+        const n = Math.floor(Number(maxRaw))
+        if (!Number.isFinite(n) || n < 1) {
+          throw new Error('Le nombre maximum de membres doit être un entier ≥ 1, ou laissez le champ vide.')
+        }
+        maxMembers = n
+      }
+
       const { data, error } = await supabase
         .from('tontines')
         .insert([{
@@ -155,6 +166,7 @@ export default function NewTontinePage() {
           currency: currency,
           status: 'active',
           inviteCode,
+          ...(maxMembers != null ? { maxMembers } : {}),
         }])
         .select()
         .single()
@@ -265,6 +277,23 @@ export default function NewTontinePage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="maxMembers">Nombre maximum de membres (optionnel)</Label>
+              <Input
+                id="maxMembers"
+                type="number"
+                min={1}
+                step={1}
+                placeholder="Illimité — à préciser plus tard dans la vue d’ensemble"
+                value={formData.maxMembers}
+                onChange={(e) => setFormData({ ...formData, maxMembers: e.target.value })}
+              />
+              <p className="text-xs text-solidarpay-text/70">
+                Si vous renseignez un nombre, la tontine n’acceptera pas plus de membres. À chaque ajout, vous choisissez
+                le rang (tour) dans la rotation.
+              </p>
             </div>
 
             <div className="space-y-2">
