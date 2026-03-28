@@ -1,5 +1,7 @@
+// Sur Vercel, ne pas utiliser `output: 'standalone'` : l’hébergeur gère le déploiement
+// et cette option alourdit fortement « Collecting build traces » (risque d’OOM / timeout).
 const nextConfig = {
-  output: 'standalone',
+  ...(process.env.VERCEL ? {} : { output: 'standalone' }),
   images: {
     unoptimized: true,
   },
