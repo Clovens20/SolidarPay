@@ -22,11 +22,9 @@ export default function HeroSection() {
             <div className="space-y-4">
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-solidarpay-text leading-tight">
                 SolidarPay
-                <br />
-                <span className="text-solidarpay-primary">La Tontine Simplifiée</span>
               </h1>
               <p className="text-xl sm:text-2xl text-solidarpay-text/70 max-w-2xl mx-auto lg:mx-0">
-                Simplifiez la gestion de vos tontines grâce à la technologie
+                Simplifiez la gestion de vos contributions collectif grâce à la technologie
               </p>
             </div>
 
