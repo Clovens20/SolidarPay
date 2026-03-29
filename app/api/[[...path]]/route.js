@@ -9,6 +9,7 @@ import {
 import { formatCurrency } from '../../../lib/currency-utils.js'
 import { shortReminderPaymentHint } from '../../../lib/tontine-receiver.js'
 import { ensureUniqueInviteCode } from '../../../lib/tontine-invite-code.js'
+import { getAuthCallbackUrl } from '../../../lib/site-url.js'
 import { v4 as uuidv4 } from 'uuid'
 
 // Helper function to handle errors
@@ -344,10 +345,13 @@ export async function POST(request) {
         return NextResponse.json({ error: 'Ce pays n\'est pas disponible actuellement' }, { status: 400 })
       }
 
-      // Create auth user
+      // Create auth user — après confirmation e-mail, redirection vers /auth/callback puis interface selon le rôle
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          emailRedirectTo: getAuthCallbackUrl(),
+        },
       })
 
       if (authError) throw authError
