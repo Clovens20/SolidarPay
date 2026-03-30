@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchEnabledPaymentCountries } from '@/lib/fetch-enabled-countries'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -60,13 +61,7 @@ export default function CompleteProfileModal({ user, open, onComplete }) {
   const loadCountries = async () => {
     try {
       setLoading(true)
-      const { data, error } = await supabase
-        .from('payment_countries')
-        .select('code, name, paymentMethods')
-        .eq('enabled', true)
-        .order('name', { ascending: true })
-
-      if (error) throw error
+      const data = await fetchEnabledPaymentCountries()
       setCountries(data || [])
       
       // Si l'utilisateur a déjà un pays, charger ses méthodes

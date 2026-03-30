@@ -28,8 +28,13 @@ export default function Footer() {
         .order('display_order')
 
       if (error) {
-        console.error('Error loading footer content:', error)
-        // Si la table n'existe pas, utiliser les valeurs par défaut
+        if (process.env.NODE_ENV === 'development') {
+          console.warn(
+            'Footer: données BDD indisponibles, affichage par défaut.',
+            error.message || error.code || ''
+          )
+        }
+        // Si la table n'existe pas ou RLS / erreur transitoire, utiliser les valeurs par défaut
         setFooterContent({
           brand: { title: 'SolidarPay', content: { description: 'La plateforme digitale qui modernise les tontines familiales africaines' } },
           navigation: { content: { links: [
@@ -64,7 +69,9 @@ export default function Footer() {
 
       setFooterContent(contentMap)
     } catch (error) {
-      console.error('Error loading footer:', error)
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('Footer:', error?.message || error)
+      }
     } finally {
       setLoading(false)
     }

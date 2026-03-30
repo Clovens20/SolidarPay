@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { fetchEnabledPaymentCountries } from '@/lib/fetch-enabled-countries'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -42,13 +43,7 @@ export default function ProfilePage() {
 
   const loadCountries = async () => {
     try {
-      const { data, error } = await supabase
-        .from('payment_countries')
-        .select('code, name')
-        .eq('enabled', true)
-        .order('name', { ascending: true })
-
-      if (error) throw error
+      const data = await fetchEnabledPaymentCountries()
       setCountries(data || [])
     } catch (error) {
       console.error('Error loading countries:', error)

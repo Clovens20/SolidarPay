@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { fetchEnabledPaymentCountries } from '@/lib/fetch-enabled-countries'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -217,24 +218,7 @@ export default function MembersTab({
   const loadCountries = async () => {
     try {
       setLoadingCountries(true)
-      const { data, error } = await supabase
-        .from('payment_countries')
-        .select('code, name, enabled')
-        .eq('enabled', true)
-        .order('name', { ascending: true })
-
-      if (error) {
-        console.error('Error loading countries:', error)
-        toast({
-          title: 'Attention',
-          description: 'Impossible de charger les pays. Vérifiez que la table payment_countries existe.',
-          variant: 'destructive'
-        })
-        setCountries([])
-        return
-      }
-      
-      console.log('Countries loaded:', data) // Debug
+      const data = await fetchEnabledPaymentCountries()
       setCountries(data || [])
       
       if (!data || data.length === 0) {

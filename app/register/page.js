@@ -12,6 +12,7 @@ import { Toaster } from '@/components/ui/toaster'
 import { UserPlus, ArrowLeft, CheckCircle, Users, UserCheck, Globe } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { fetchEnabledPaymentCountries } from '@/lib/fetch-enabled-countries'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -56,14 +57,8 @@ export default function RegisterPage() {
 
   const loadCountries = async () => {
     try {
-      const { data, error } = await supabase
-        .from('payment_countries')
-        .select('code, name')
-        .eq('enabled', true)
-        .order('name', { ascending: true })
-
-      if (error) throw error
-      setCountries(data || [])
+      const data = await fetchEnabledPaymentCountries()
+      setCountries(data)
     } catch (error) {
       console.error('Error loading countries:', error)
       toast({
@@ -237,9 +232,11 @@ export default function RegisterPage() {
                     <span className="ml-2 text-sm text-solidarpay-text/70">Chargement des pays...</span>
                   </div>
                 ) : (
-                  <Select 
-                    value={formData.country} 
-                    onValueChange={(value) => setFormData({ ...formData, country: value })}
+                  <Select
+                    value={formData.country || undefined}
+                    onValueChange={(value) =>
+                      setFormData((prev) => ({ ...prev, country: value }))
+                    }
                     required
                   >
                     <SelectTrigger className="border-solidarpay-border focus:border-solidarpay-primary">

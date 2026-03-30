@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { fetchEnabledPaymentCountries } from '@/lib/fetch-enabled-countries'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,74 +48,26 @@ export default function SearchMembersPage() {
   const loadCountries = async () => {
     try {
       setLoadingCountries(true)
-      console.log('🔍 Loading countries...')
-      
-      const { data, error } = await supabase
-        .from('payment_countries')
-        .select('code, name, enabled')
-        .eq('enabled', true)
-        .order('name', { ascending: true })
-
-      if (error) {
-        console.error('❌ Error loading countries:', error)
-        toast({
-          title: 'Erreur',
-          description: 'Impossible de charger les pays: ' + error.message,
-          variant: 'destructive'
-        })
-        setCountries([])
-        return
-      }
-      
-      console.log('✅ Countries loaded:', data)
-      console.log('📊 Number of countries:', data?.length || 0)
-      
+      const data = await fetchEnabledPaymentCountries()
       setCountries(data || [])
-      
-      // Create a map of country codes to names for quick lookup
       const countryMap = {}
-      ;(data || []).forEach(country => {
+      ;(data || []).forEach((country) => {
         countryMap[country.code] = country.name
       })
       setCountryNames(countryMap)
-      
-      if (!data || data.length === 0) {
-        console.warn('⚠️ No countries found with enabled=true')
-        console.warn('Trying to load all countries without filter...')
-        
-        // Essayer sans le filtre enabled pour voir si c'est un problème de permissions
-        const { data: allData, error: allError } = await supabase
-          .from('payment_countries')
-          .select('code, name, enabled')
-          .order('name', { ascending: true })
-        
-        if (!allError && allData && allData.length > 0) {
-          console.log('✅ Found countries without enabled filter:', allData)
-          // Filtrer manuellement les pays activés
-          const enabledCountries = allData.filter(c => c.enabled === true)
-          console.log('✅ Enabled countries:', enabledCountries)
-          setCountries(enabledCountries)
-          
-          const countryMap2 = {}
-          enabledCountries.forEach(country => {
-            countryMap2[country.code] = country.name
-          })
-          setCountryNames(countryMap2)
-        } else {
-          console.error('❌ Still no countries found:', allError)
-          toast({
-            title: 'Aucun pays disponible',
-            description: 'Aucun pays activé trouvé. Vérifiez la configuration.',
-            variant: 'destructive'
-          })
-        }
+      if (!data?.length) {
+        toast({
+          title: 'Aucun pays disponible',
+          description: 'Aucun pays activé trouvé. Vérifiez la configuration.',
+          variant: 'destructive',
+        })
       }
     } catch (error) {
-      console.error('❌ Exception loading countries:', error)
+      console.error('Error loading countries:', error)
       toast({
         title: 'Erreur',
-        description: 'Erreur lors du chargement des pays: ' + error.message,
-        variant: 'destructive'
+        description: 'Impossible de charger les pays: ' + (error.message || ''),
+        variant: 'destructive',
       })
       setCountries([])
     } finally {
