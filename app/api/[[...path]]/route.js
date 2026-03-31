@@ -10,6 +10,8 @@ import { formatCurrency } from '../../../lib/currency-utils.js'
 import { shortReminderPaymentHint } from '../../../lib/tontine-receiver.js'
 import { ensureUniqueInviteCode } from '../../../lib/tontine-invite-code.js'
 import { getAuthCallbackUrl } from '../../../lib/site-url.js'
+import { createSupabaseAdmin } from '../../../lib/supabase-admin.js'
+import { FALLBACK_COUNTRY_CODES } from '../../../lib/fallback-payment-countries.js'
 import { v4 as uuidv4 } from 'uuid'
 
 // Helper function to handle errors
@@ -321,8 +323,10 @@ export async function POST(request) {
     if (path === 'auth/register') {
       const { email, password, fullName, phone, country, role = 'member' } = body
 
-      // Validation du pays (obligatoire)
-      if (!country) {
+      const countryCode = String(country ?? '')
+        .trim()
+        .toUpperCase()
+      if (!countryCode) {
         return NextResponse.json({ error: 'Le pays est obligatoire' }, { status: 400 })
       }
 
@@ -330,19 +334,29 @@ export async function POST(request) {
       const validRoles = ['member', 'admin']
       const userRole = validRoles.includes(role) ? role : 'member'
 
-      // Vérifier que le pays existe et est activé
-      const { data: countryData, error: countryError } = await supabase
+      // Pays : clé service si dispo (contourne RLS), sinon anon ; repli sur liste embarquée (même liste que le formulaire)
+      const countryClient = createSupabaseAdmin() || supabase
+      const { data: countryRow } = await countryClient
         .from('payment_countries')
         .select('code, enabled')
-        .eq('code', country)
-        .single()
+        .eq('code', countryCode)
+        .maybeSingle()
 
-      if (countryError || !countryData) {
-        return NextResponse.json({ error: 'Pays invalide' }, { status: 400 })
+      let countryAllowed = false
+      if (countryRow) {
+        if (countryRow.enabled === false) {
+          return NextResponse.json(
+            { error: 'Ce pays n\'est pas disponible actuellement' },
+            { status: 400 }
+          )
+        }
+        countryAllowed = true
+      } else if (FALLBACK_COUNTRY_CODES.has(countryCode)) {
+        countryAllowed = true
       }
 
-      if (!countryData.enabled) {
-        return NextResponse.json({ error: 'Ce pays n\'est pas disponible actuellement' }, { status: 400 })
+      if (!countryAllowed) {
+        return NextResponse.json({ error: 'Pays invalide' }, { status: 400 })
       }
 
       // Create auth user — après confirmation e-mail, redirection vers /auth/callback puis interface selon le rôle
@@ -364,7 +378,7 @@ export async function POST(request) {
           email,
           fullName,
           phone: phone || null,
-          country: country,
+          country: countryCode,
           role: userRole,
         }])
         .select()

@@ -22,8 +22,9 @@ export default function RegisterPage() {
     email: '',
     password: '',
     phone: '',
-    country: '',
-    role: 'member' // Par défaut membre
+    /** undefined = Select contrôlé dès le 1er rendu (évite uncontrolled → controlled) */
+    country: undefined,
+    role: 'member',
   })
   const [countries, setCountries] = useState(() => [
     ...FALLBACK_ENABLED_PAYMENT_COUNTRIES,
@@ -100,7 +101,7 @@ export default function RegisterPage() {
           password: formData.password,
           fullName: formData.fullName,
           phone: formData.phone || null,
-          country: formData.country,
+          country: formData.country ?? '',
           role: formData.role || 'member',
         }),
       })
@@ -219,7 +220,7 @@ export default function RegisterPage() {
                   Pays de résidence *
                 </Label>
                 <Select
-                  value={formData.country || undefined}
+                  value={formData.country}
                   onValueChange={(value) =>
                     setFormData((prev) => ({ ...prev, country: value }))
                   }
@@ -249,9 +250,11 @@ export default function RegisterPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="role">Type de compte *</Label>
-                <Select 
-                  value={formData.role} 
-                  onValueChange={(value) => setFormData({ ...formData, role: value })}
+                <Select
+                  value={formData.role}
+                  onValueChange={(value) =>
+                    setFormData((prev) => ({ ...prev, role: value }))
+                  }
                 >
                   <SelectTrigger className="border-solidarpay-border focus:border-solidarpay-primary">
                     <SelectValue placeholder="Choisissez votre type de compte" />
