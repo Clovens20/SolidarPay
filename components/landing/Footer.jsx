@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
+import { getDefaultFooterContentMap } from '@/lib/fallback-footer-content'
 import { Mail, Phone } from 'lucide-react'
 
 export default function Footer() {
@@ -21,57 +21,15 @@ export default function Footer() {
 
   const loadFooterContent = async () => {
     try {
-      const { data, error } = await supabase
-        .from('footer_content')
-        .select('*')
-        .eq('enabled', true)
-        .order('display_order')
-
-      if (error) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn(
-            'Footer: données BDD indisponibles, affichage par défaut.',
-            error.message || error.code || ''
-          )
-        }
-        // Si la table n'existe pas ou RLS / erreur transitoire, utiliser les valeurs par défaut
-        setFooterContent({
-          brand: { title: 'SolidarPay', content: { description: 'La plateforme digitale qui modernise les tontines familiales africaines' } },
-          navigation: { content: { links: [
-            { label: 'Comment ça marche', href: '/#how-it-works' },
-            { label: 'Inscription', href: '/register' },
-            { label: 'Connexion', href: '/login' }
-          ]}},
-          legal: { content: { links: [
-            { label: 'À propos', href: '/about' },
-            { label: 'Contact', href: '/contact' },
-            { label: 'CGU', href: '/terms' },
-            { label: 'Confidentialité', href: '/privacy' }
-          ]}},
-          contact: { content: { email: 'support@solidarpay.com', phone: '+1 (555) 123-4567' }},
-          social: { content: { links: [
-            { platform: 'tiktok', url: '#' }
-          ]}}
-        })
-        return
+      const res = await fetch('/api/footer-content')
+      const json = await res.json().catch(() => ({}))
+      if (json.sections && typeof json.sections === 'object') {
+        setFooterContent(json.sections)
+      } else {
+        setFooterContent(getDefaultFooterContentMap())
       }
-
-      const contentMap = {}
-      data?.forEach(section => {
-        const content = typeof section.content === 'string' 
-          ? JSON.parse(section.content || '{}') 
-          : (section.content || {})
-        contentMap[section.section_name] = {
-          ...section,
-          content
-        }
-      })
-
-      setFooterContent(contentMap)
-    } catch (error) {
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('Footer:', error?.message || error)
-      }
+    } catch {
+      setFooterContent(getDefaultFooterContentMap())
     } finally {
       setLoading(false)
     }

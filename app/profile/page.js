@@ -31,26 +31,26 @@ export default function ProfilePage() {
         return
       }
 
-      const userData = JSON.parse(savedUser)
-
       const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
-      if (sessionError || !session) {
+      if (sessionError || !session?.access_token) {
         localStorage.removeItem('solidarpay_session')
         localStorage.removeItem('solidarpay_user')
         router.push('/')
         return
       }
 
-      const { data: userFromDB, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', session.user.id)
-        .single()
+      const meRes = await fetch('/api/user/me', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      const meJson = await meRes.json().catch(() => ({}))
 
-      if (userError) throw userError
+      if (!meRes.ok || !meJson.user) {
+        throw new Error(meJson.error || 'Profil indisponible')
+      }
 
-      setUser(userFromDB || userData)
+      setUser(meJson.user)
+      localStorage.setItem('solidarpay_user', JSON.stringify(meJson.user))
     } catch (error) {
       console.error('Error loading user:', error)
       toast({

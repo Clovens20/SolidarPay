@@ -12,6 +12,12 @@ import { ensureUniqueInviteCode } from '../../../lib/tontine-invite-code.js'
 import { getAuthCallbackUrl } from '../../../lib/site-url.js'
 import { createSupabaseAdmin } from '../../../lib/supabase-admin.js'
 import { FALLBACK_COUNTRY_CODES } from '../../../lib/fallback-payment-countries.js'
+import { withSupabaseRetry } from '../../../lib/supabase-query-retry.js'
+import {
+  fetchPublicUserByEmailWithFallback,
+  fetchPublicUserProfileWithFallback,
+  resolveUserIdAndRole,
+} from '../../../lib/auth-user-profile.js'
 import { v4 as uuidv4 } from 'uuid'
 
 // Helper function to handle errors
@@ -48,18 +54,20 @@ export async function GET(request) {
         return NextResponse.json({ error: error.message }, { status: 401 })
       }
 
-      // Get user details from users table
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', user.email)
-        .single()
-
-      if (userError) {
-        return NextResponse.json({ error: userError.message }, { status: 404 })
+      const profile = await fetchPublicUserProfileWithFallback(user)
+      if (profile.user) {
+        return NextResponse.json({ user: profile.user })
       }
-
-      return NextResponse.json({ user: userData })
+      if (profile.notFound) {
+        return NextResponse.json(
+          { error: 'Utilisateur introuvable dans la base de données' },
+          { status: 404 }
+        )
+      }
+      return NextResponse.json(
+        { error: profile.error?.message || 'Erreur serveur' },
+        { status: 500 }
+      )
     }
 
     // Get all users
@@ -75,27 +83,21 @@ export async function GET(request) {
 
     // Get all tontines (filtrées selon le rôle de l'utilisateur)
     if (path === 'tontines') {
-      // Récupérer l'utilisateur connecté depuis le header ou la session
       const authHeader = request.headers.get('authorization')
       let userId = null
       let userRole = null
+      const db = createSupabaseAdmin() || supabase
 
-      // Essayer de récupérer l'utilisateur depuis le header Authorization
       if (authHeader) {
         try {
           const token = authHeader.replace('Bearer ', '')
           const { data: { user }, error: userError } = await supabase.auth.getUser(token)
-          
+
           if (!userError && user) {
-            const { data: userData } = await supabase
-              .from('users')
-              .select('id, role')
-              .eq('id', user.id)
-              .single()
-            
-            if (userData) {
-              userId = userData.id
-              userRole = userData.role
+            const resolved = await resolveUserIdAndRole(user)
+            if (resolved) {
+              userId = resolved.userId
+              userRole = resolved.userRole
             }
           }
         } catch (err) {
@@ -103,63 +105,65 @@ export async function GET(request) {
         }
       }
 
-      // Si pas d'utilisateur connecté, retourner vide
       if (!userId) {
         return NextResponse.json([])
       }
 
       let tontinesData = []
 
-      // Si l'utilisateur est admin, retourner les tontines qu'il administre
       if (userRole === 'admin') {
-        const { data, error } = await supabase
-          .from('tontines')
-          .select(`
+        const { data, error } = await withSupabaseRetry(
+          () =>
+            db
+              .from('tontines')
+              .select(`
             *,
             admin:adminId (id, fullName, email)
           `)
-          .eq('adminId', userId)
-          .order('createdAt', { ascending: false })
-
+              .eq('adminId', userId)
+              .order('createdAt', { ascending: false }),
+          { maxAttempts: 4, baseDelayMs: 400 }
+        )
         if (error) throw error
         tontinesData = data || []
-      } 
-      // Si l'utilisateur est membre, retourner uniquement les tontines où il est membre
-      else if (userRole === 'member') {
-        // Récupérer les IDs des tontines où l'utilisateur est membre
-        const { data: memberTontines, error: memberError } = await supabase
-          .from('tontine_members')
-          .select('tontineId')
-          .eq('userId', userId)
-
+      } else if (userRole === 'member') {
+        const { data: memberTontines, error: memberError } = await withSupabaseRetry(
+          () =>
+            db.from('tontine_members').select('tontineId').eq('userId', userId),
+          { maxAttempts: 4, baseDelayMs: 400 }
+        )
         if (memberError) throw memberError
 
-        const tontineIds = (memberTontines || []).map(m => m.tontineId)
+        const tontineIds = (memberTontines || []).map((m) => m.tontineId)
 
         if (tontineIds.length > 0) {
-          const { data, error } = await supabase
-            .from('tontines')
-            .select(`
+          const { data, error } = await withSupabaseRetry(
+            () =>
+              db
+                .from('tontines')
+                .select(`
               *,
               admin:adminId (id, fullName, email)
             `)
-            .in('id', tontineIds)
-            .order('createdAt', { ascending: false })
-
+                .in('id', tontineIds)
+                .order('createdAt', { ascending: false }),
+            { maxAttempts: 4, baseDelayMs: 400 }
+          )
           if (error) throw error
           tontinesData = data || []
         }
-      }
-      // Pour les autres rôles (super_admin), retourner toutes les tontines
-      else {
-        const { data, error } = await supabase
-          .from('tontines')
-          .select(`
+      } else {
+        const { data, error } = await withSupabaseRetry(
+          () =>
+            db
+              .from('tontines')
+              .select(`
             *,
             admin:adminId (id, fullName, email)
           `)
-          .order('createdAt', { ascending: false })
-
+              .order('createdAt', { ascending: false }),
+          { maxAttempts: 4, baseDelayMs: 400 }
+        )
         if (error) throw error
         tontinesData = data || []
       }
@@ -172,8 +176,8 @@ export async function GET(request) {
     const tontinesPathMatch = path.match(/^tontines\/([^\/]+)$/)
     if (tontinesPathMatch) {
       const tontineId = tontinesPathMatch[1]
-      
-      // Récupérer l'utilisateur connecté
+      const db = createSupabaseAdmin() || supabase
+
       const authHeader = request.headers.get('authorization')
       let userId = null
       let userRole = null
@@ -182,17 +186,12 @@ export async function GET(request) {
         try {
           const token = authHeader.replace('Bearer ', '')
           const { data: { user }, error: userError } = await supabase.auth.getUser(token)
-          
+
           if (!userError && user) {
-            const { data: userData } = await supabase
-              .from('users')
-              .select('id, role')
-              .eq('id', user.id)
-              .single()
-            
-            if (userData) {
-              userId = userData.id
-              userRole = userData.role
+            const resolved = await resolveUserIdAndRole(user)
+            if (resolved) {
+              userId = resolved.userId
+              userRole = resolved.userRole
             }
           }
         } catch (err) {
@@ -200,53 +199,59 @@ export async function GET(request) {
         }
       }
 
-      // Récupérer la tontine
-      const { data: tontine, error: tontineError } = await supabase
-        .from('tontines')
-        .select(`
+      const { data: tontine, error: tontineError } = await withSupabaseRetry(
+        () =>
+          db
+            .from('tontines')
+            .select(`
           *,
           admin:adminId (id, fullName, email)
         `)
-        .eq('id', tontineId)
-        .single()
+            .eq('id', tontineId)
+            .single(),
+        { maxAttempts: 4, baseDelayMs: 400 }
+      )
 
       if (tontineError) throw tontineError
       if (!tontine) {
         return NextResponse.json({ error: 'Tontine not found' }, { status: 404 })
       }
 
-      // Vérifier l'accès selon le rôle
       if (userId && userRole) {
         if (userRole === 'member') {
-          // Vérifier que l'utilisateur est membre de cette tontine
-          const { data: membership, error: membershipError } = await supabase
-            .from('tontine_members')
-            .select('id')
-            .eq('tontineId', tontineId)
-            .eq('userId', userId)
-            .single()
+          const { data: membership, error: membershipError } = await withSupabaseRetry(
+            () =>
+              db
+                .from('tontine_members')
+                .select('id')
+                .eq('tontineId', tontineId)
+                .eq('userId', userId)
+                .single(),
+            { maxAttempts: 4, baseDelayMs: 400 }
+          )
 
           if (membershipError || !membership) {
             return NextResponse.json({ error: 'Access denied' }, { status: 403 })
           }
         } else if (userRole === 'admin') {
-          // Vérifier que l'utilisateur est admin de cette tontine
           if (tontine.adminId !== userId) {
             return NextResponse.json({ error: 'Access denied' }, { status: 403 })
           }
         }
-        // super_admin peut accéder à toutes les tontines
       }
 
-      // Get members
-      const { data: members, error: membersError } = await supabase
-        .from('tontine_members')
-        .select(`
+      const { data: members, error: membersError } = await withSupabaseRetry(
+        () =>
+          db
+            .from('tontine_members')
+            .select(`
           *,
           user:userId (id, fullName, email, kohoEmail)
         `)
-        .eq('tontineId', tontineId)
-        .order('rotationOrder', { ascending: true })
+            .eq('tontineId', tontineId)
+            .order('rotationOrder', { ascending: true }),
+        { maxAttempts: 4, baseDelayMs: 400 }
+      )
 
       if (membersError) throw membersError
 
@@ -334,13 +339,17 @@ export async function POST(request) {
       const validRoles = ['member', 'admin']
       const userRole = validRoles.includes(role) ? role : 'member'
 
-      // Pays : clé service si dispo (contourne RLS), sinon anon ; repli sur liste embarquée (même liste que le formulaire)
+      // Pays : clé service si dispo (contourne RLS), sinon anon ; retry PostgREST (PGRST002 / schema cache)
       const countryClient = createSupabaseAdmin() || supabase
-      const { data: countryRow } = await countryClient
-        .from('payment_countries')
-        .select('code, enabled')
-        .eq('code', countryCode)
-        .maybeSingle()
+      const { data: countryRow, error: countryQueryError } = await withSupabaseRetry(
+        () =>
+          countryClient
+            .from('payment_countries')
+            .select('code, enabled')
+            .eq('code', countryCode)
+            .maybeSingle(),
+        { maxAttempts: 6, baseDelayMs: 400 }
+      )
 
       let countryAllowed = false
       if (countryRow) {
@@ -352,46 +361,71 @@ export async function POST(request) {
         }
         countryAllowed = true
       } else if (FALLBACK_COUNTRY_CODES.has(countryCode)) {
+        if (countryQueryError) {
+          console.warn(
+            '[auth/register] payment_countries indisponible, repli codes embarqués:',
+            countryQueryError.code || countryQueryError.message
+          )
+        }
         countryAllowed = true
+      } else if (countryQueryError) {
+        return NextResponse.json(
+          {
+            error:
+              'Service temporairement indisponible. Réessayez dans quelques instants.',
+          },
+          { status: 503 }
+        )
       }
 
       if (!countryAllowed) {
         return NextResponse.json({ error: 'Pays invalide' }, { status: 400 })
       }
 
-      // Create auth user — après confirmation e-mail, redirection vers /auth/callback puis interface selon le rôle
+      // Auth + profil : métadonnées pour le trigger SQL public.handle_new_user (voir sql/trigger-handle-new-user.sql).
+      // Le profil est inséré dans Postgres au même moment que auth.users — plus d’échec PostgREST après e-mail envoyé.
+      const phoneTrimmed = phone && String(phone).trim() ? String(phone).trim() : null
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
           emailRedirectTo: getAuthCallbackUrl(),
+          data: {
+            fullName,
+            country: countryCode,
+            role: userRole,
+            phone: phoneTrimmed,
+          },
         },
       })
 
       if (authError) throw authError
 
-      // Create user record avec le pays
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .insert([{
-          id: authData.user.id,
-          email,
-          fullName,
-          phone: phone || null,
-          country: countryCode,
-          role: userRole,
-        }])
-        .select()
-        .single()
+      if (!authData?.user?.id) {
+        return NextResponse.json(
+          {
+            error:
+              'Inscription incomplète. Réessayez ou contactez le support.',
+          },
+          { status: 500 }
+        )
+      }
 
-      if (userError) throw userError
+      const userPayload = {
+        id: authData.user.id,
+        email,
+        fullName,
+        phone: phoneTrimmed,
+        country: countryCode,
+        role: userRole,
+        createdAt: authData.user.created_at ?? new Date().toISOString(),
+      }
 
-      // Email de bienvenue en arrière-plan : ne pas bloquer la réponse (UX inscription instantanée)
       void sendWelcomeEmail(email, fullName).catch((err) =>
         console.error('sendWelcomeEmail:', err)
       )
 
-      return NextResponse.json({ user: userData, session: authData.session })
+      return NextResponse.json({ user: userPayload, session: authData.session })
     }
 
     // Login
@@ -417,27 +451,25 @@ export async function POST(request) {
         )
       }
 
-      // Get user details - utiliser .maybeSingle() pour éviter l'erreur si utilisateur non trouvé
-      const { data: userData, error: userError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', email)
-        .maybeSingle()
-
-      if (userError) {
-        return NextResponse.json({ error: userError.message }, { status: 500 })
-      }
-
-      if (!userData) {
-        return NextResponse.json({ error: 'Utilisateur introuvable dans la base de données' }, { status: 404 })
-      }
-
-      // Vérifier que la session existe
       if (!data.session) {
         return NextResponse.json({ error: 'Erreur de session' }, { status: 500 })
       }
 
-      return NextResponse.json({ user: userData, session: data.session })
+      const profile = await fetchPublicUserByEmailWithFallback(email, data.user)
+
+      if (profile.user) {
+        return NextResponse.json({ user: profile.user, session: data.session })
+      }
+      if (profile.notFound) {
+        return NextResponse.json(
+          { error: 'Utilisateur introuvable dans la base de données' },
+          { status: 404 }
+        )
+      }
+      return NextResponse.json(
+        { error: profile.error?.message || 'Connexion impossible.' },
+        { status: 500 }
+      )
     }
 
     // Create tontine

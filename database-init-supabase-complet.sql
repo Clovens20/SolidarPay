@@ -582,7 +582,55 @@ CREATE UNIQUE INDEX IF NOT EXISTS tontines_invite_code_unique
   ON public.tontines ("inviteCode")
   WHERE "inviteCode" IS NOT NULL;
 
+-- --- Inscription : profil public.users synchronisé avec auth (évite PostgREST / PGRST002) ---
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_role TEXT;
+  v_full_name TEXT;
+  v_country TEXT;
+  v_phone TEXT;
+BEGIN
+  v_role := COALESCE(NULLIF(TRIM(NEW.raw_user_meta_data->>'role'), ''), 'member');
+  IF v_role NOT IN ('member', 'admin') THEN
+    v_role := 'member';
+  END IF;
+
+  v_full_name := COALESCE(
+    NULLIF(TRIM(NEW.raw_user_meta_data->>'fullName'), ''),
+    NULLIF(TRIM(NEW.raw_user_meta_data->>'full_name'), ''),
+    SPLIT_PART(NEW.email, '@', 1),
+    'Utilisateur'
+  );
+
+  v_country := NULLIF(UPPER(TRIM(NEW.raw_user_meta_data->>'country')), '');
+  v_phone := NULLIF(TRIM(NEW.raw_user_meta_data->>'phone'), '');
+
+  INSERT INTO public.users (id, email, "fullName", phone, country, role)
+  VALUES (NEW.id, NEW.email, v_full_name, v_phone, v_country, v_role)
+  ON CONFLICT (id) DO UPDATE SET
+    email = EXCLUDED.email,
+    "fullName" = EXCLUDED."fullName",
+    phone = EXCLUDED.phone,
+    country = COALESCE(EXCLUDED.country, users.country),
+    role = EXCLUDED.role;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW
+  EXECUTE PROCEDURE public.handle_new_user();
+
 DO $$
 BEGIN
-  RAISE NOTICE 'SolidarPay : initialisation SQL terminée (tables, vues, RLS MVP, seeds).';
+  RAISE NOTICE 'SolidarPay : initialisation SQL terminée (tables, vues, RLS MVP, seeds, trigger auth→users).';
 END $$;

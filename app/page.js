@@ -311,108 +311,28 @@ export default function App() {
         if (adminError) throw adminError
         tontinesData = adminTontines || []
       }
-      // Si l'utilisateur est membre, charger uniquement les tontines où il est membre
+      // Membre : données via API serveur (retry PostgREST / service role)
       else if (user.role === 'member') {
-        // Récupérer les IDs des tontines où l'utilisateur est membre
-        const { data: memberTontines, error: memberError } = await supabase
-          .from('tontine_members')
-          .select('tontineId')
-          .eq('userId', user.id)
-
-        if (memberError) throw memberError
-
-        const tontineIds = (memberTontines || []).map(m => m.tontineId)
-
-        // Si l'utilisateur est membre d'au moins une tontine, les charger
-        if (tontineIds.length > 0) {
-          const { data: tontines, error: tontinesError } = await supabase
-            .from('tontines')
-            .select(`
-              *,
-              admin:adminId (id, fullName, email)
-            `)
-            .in('id', tontineIds)
-            .order('createdAt', { ascending: false })
-
-          if (tontinesError) throw tontinesError
-          tontinesData = tontines || []
-        } else {
-          // L'utilisateur n'est membre d'aucune tontine
-          tontinesData = []
+        const sessionObj =
+          session ||
+          (typeof window !== 'undefined'
+            ? JSON.parse(localStorage.getItem('solidarpay_session') || 'null')
+            : null)
+        const accessToken = sessionObj?.access_token
+        if (!accessToken) {
+          throw new Error('Session sans jeton')
         }
-
-        const { data: joinReqRows, error: joinReqErr } = await supabase
-          .from('tontine_join_requests')
-          .select('id, status, createdAt, tontineId, message')
-          .eq('userId', user.id)
-          .order('createdAt', { ascending: false })
-          .limit(30)
-
-        if (!joinReqErr && joinReqRows?.length) {
-          const allReqTontineIds = [...new Set(joinReqRows.map((r) => r.tontineId))]
-          let nameById = {}
-          if (allReqTontineIds.length) {
-            const { data: tontNameRows } = await supabase
-              .from('tontines')
-              .select('id, name')
-              .in('id', allReqTontineIds)
-            nameById = Object.fromEntries((tontNameRows || []).map((t) => [t.id, t.name]))
-          }
-          setMyJoinRequests(
-            joinReqRows.map((r) => ({
-              ...r,
-              tontineName: nameById[r.tontineId] || null,
-            }))
-          )
-        } else {
-          setMyJoinRequests([])
+        const dashRes = await fetch('/api/member/dashboard', {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        })
+        const dashJson = await dashRes.json().catch(() => ({}))
+        if (!dashRes.ok) {
+          throw new Error(dashJson.error || dashRes.statusText || 'Dashboard membre')
         }
-
-        let discover = []
-        let discLabel = ''
-        if (user.country) {
-          const { data: pcRow } = await supabase
-            .from('payment_countries')
-            .select('name')
-            .eq('code', user.country)
-            .maybeSingle()
-          discLabel = pcRow?.name || user.country
-
-          const { data: adminsSameCountry } = await supabase
-            .from('users')
-            .select('id')
-            .eq('role', 'admin')
-            .eq('country', user.country)
-
-          const adminIds = (adminsSameCountry || []).map((a) => a.id)
-          if (adminIds.length) {
-            const { data: disc, error: discoverErr } = await supabase
-              .from('tontines')
-              .select(`
-                id,
-                name,
-                status,
-                contributionAmount,
-                currency,
-                frequency,
-                adminId,
-                admin:adminId (id, fullName, email, country),
-                members:tontine_members(count)
-              `)
-              .eq('status', 'active')
-              .in('adminId', adminIds)
-
-            if (!discoverErr && disc) {
-              discover = disc
-                .filter((t) => t.admin?.country === user.country)
-                .sort((a, b) =>
-                  (a.name || '').localeCompare(b.name || '', 'fr', { sensitivity: 'base' })
-                )
-            }
-          }
-        }
-        setCountryTontines(discover)
-        setCountryDiscoverLabel(discLabel)
+        tontinesData = dashJson.tontines || []
+        setMyJoinRequests(dashJson.myJoinRequests || [])
+        setCountryTontines(dashJson.countryTontines || [])
+        setCountryDiscoverLabel(dashJson.countryDiscoverLabel || '')
       }
 
       setTontines(tontinesData)

@@ -44,30 +44,34 @@ export default function AuthCallbackPage() {
         const session = await waitForSession()
         if (cancelled) return
 
-        if (!session?.user) {
+        if (!session?.user || !session.access_token) {
           setMessage('Lien invalide ou expiré. Connectez-vous avec votre e-mail et mot de passe.')
           setTimeout(() => router.replace('/login'), 2800)
           return
         }
 
-        const { data: userData, error: userErr } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', session.user.id)
-          .maybeSingle()
+        const profileRes = await fetch('/api/auth/session-profile', {
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        })
+        const profileJson = await profileRes.json().catch(() => ({}))
 
         if (cancelled) return
 
-        if (userErr || !userData) {
-          setMessage('Profil introuvable. Contactez le support.')
+        if (!profileRes.ok || !profileJson.user) {
+          setMessage(
+            profileJson.error ||
+              'Profil introuvable. Contactez le support ou réessayez dans un instant.'
+          )
           setTimeout(() => router.replace('/login'), 2800)
           return
         }
 
         localStorage.setItem('solidarpay_session', JSON.stringify(session))
-        localStorage.setItem('solidarpay_user', JSON.stringify(userData))
+        localStorage.setItem('solidarpay_user', JSON.stringify(profileJson.user))
 
-        const dest = redirectPathForRole(userData.role)
+        const dest = redirectPathForRole(profileJson.user.role)
         router.replace(dest)
       } catch (e) {
         console.error('auth/callback:', e)
