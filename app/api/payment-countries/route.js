@@ -33,7 +33,7 @@ export async function GET() {
         .select('code, name, paymentMethods')
         .eq('enabled', true)
         .order('name', { ascending: true }),
-    { maxAttempts: 8, baseDelayMs: 600 }
+    { maxAttempts: 4, baseDelayMs: 400 }
   )
 
   if (error) {
